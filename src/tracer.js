@@ -13,6 +13,8 @@ import * as reports from "./reports/index.js";
 const stateConfigKey = Symbol("stateConfigKey");
 
 const traceCallback = [];
+const traceCallCallback = [];
+const tracePropertyCallback = [];
 
 /**
  * Главный класс трассировщика для мониторинга вызовов функций,
@@ -418,9 +420,14 @@ export class Tracer {
    * services.user.getProfile(123);
    */
   static observeAll(targetList) {
-    targetList.forEach((key) => {
-      const target = targetList[key];
-      Tracer.observe(target);
+    const targetValues = Array.isArray(targetList)
+      ? targetList
+      : Object.values(targetList || {});
+
+    targetValues.forEach((target) => {
+      if (target) {
+        Tracer.observe(target);
+      }
     });
 
     return Tracer;
@@ -456,9 +463,14 @@ export class Tracer {
    * user.save(); // Отслеживается
    */
   static observePrototypeAll(targetList) {
-    targetList.forEach((key) => {
-      const target = targetList[key];
-      Tracer.observePrototype(target.prototype);
+    const targetValues = Array.isArray(targetList)
+      ? targetList
+      : Object.values(targetList || {});
+
+    targetValues.forEach((target) => {
+      if (typeof target === "function") {
+        Tracer.observePrototype(target);
+      }
     });
 
     return Tracer;
@@ -576,7 +588,7 @@ export class Tracer {
       throw new Error(`Аргумент сonfig должен быть объектов`);
     }
 
-    if (config.hasOwnProperty(config, 'initial')) {
+    if (Object.prototype.hasOwnProperty.call(config, 'initial')) {
       Tracer.tracerState.set(streamSliceName, config.initial);
     }
     
@@ -785,7 +797,9 @@ export class Tracer {
    */
   static traceSliceSeq(sliceSeq, callback) {
     Tracer.trace((args) => {
-      const isTraceSeq = sliceSeq.some((name) => args.tracerState.get(name) !== true) === true;
+      const isTraceSeq = sliceSeq.every(
+        (name) => args.tracerState.get(name) === true,
+      );
 
       if (isTraceSeq) {
         callback(args);
@@ -977,6 +991,42 @@ export class Tracer {
   }
 
   /**
+   * Подписка только на события вызовов функций.
+   * @param {Function} callback
+   * @returns {typeof Tracer}
+   */
+  static traceCalls(callback) {
+    if (!callback) {
+      throw new Error("Укажите колбек!");
+    }
+
+    traceCallCallback.push(callback);
+
+    emitter.subscribe("beforeCallMethod", callback);
+    emitter.subscribe("afterCallMethod", callback);
+
+    return Tracer;
+  }
+
+  /**
+   * Подписка только на события чтения/записи свойств.
+   * @param {Function} callback
+   * @returns {typeof Tracer}
+   */
+  static traceProperties(callback) {
+    if (!callback) {
+      throw new Error("Укажите колбек!");
+    }
+
+    tracePropertyCallback.push(callback);
+
+    emitter.subscribe("propertyGet", callback);
+    emitter.subscribe("propertySet", callback);
+
+    return Tracer;
+  }
+
+  /**
    * Очищает все подписки трассировки
    * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
    * 
@@ -990,6 +1040,32 @@ export class Tracer {
     traceCallback.forEach((callback) => {
       emitter.unSubscribe("beforeCallMethod", callback);
       emitter.unSubscribe("afterCallMethod", callback);
+      emitter.unSubscribe("propertyGet", callback);
+      emitter.unSubscribe("propertySet", callback);
+    });
+
+    return Tracer;
+  }
+
+  /**
+   * Очистка подписок на события вызовов функций.
+   * @returns {typeof Tracer}
+   */
+  static traceCallsClear() {
+    traceCallCallback.forEach((callback) => {
+      emitter.unSubscribe("beforeCallMethod", callback);
+      emitter.unSubscribe("afterCallMethod", callback);
+    });
+
+    return Tracer;
+  }
+
+  /**
+   * Очистка подписок на события чтения/записи свойств.
+   * @returns {typeof Tracer}
+   */
+  static tracePropertiesClear() {
+    tracePropertyCallback.forEach((callback) => {
       emitter.unSubscribe("propertyGet", callback);
       emitter.unSubscribe("propertySet", callback);
     });
@@ -1078,15 +1154,28 @@ export class Tracer {
 
         if (predicate(arguments)) {
           tracerState.set(sliceName, true);
-          
-          const result = originalFn.apply(this, arguments);
 
-          tracerState.set(sliceName, false);
-          return result;
+          const finalizeSlice = () => tracerState.set(sliceName, false);
+
+          try {
+            const result = originalFn.apply(this, arguments);
+
+            if (result && typeof result.finally === "function") {
+              return result.finally(finalizeSlice);
+            }
+
+            finalizeSlice();
+            return result;
+          } catch (error) {
+            finalizeSlice();
+            throw error;
+          }
         }
 
         return originalFn.apply(this, arguments);
       }
+
+      return Tracer;
   }
 
   /**
@@ -1116,12 +1205,22 @@ export class Tracer {
 
     const result = function(...args) {
       Tracer.tracerState.set(sliceName, true);
-      
-      const result = fn.apply(this, args);
-      
-      Tracer.tracerState.set(sliceName, false);
 
-      return result;
+      const finalizeSlice = () => Tracer.tracerState.set(sliceName, false);
+
+      try {
+        const result = fn.apply(this, args);
+
+        if (result && typeof result.finally === "function") {
+          return result.finally(finalizeSlice);
+        }
+
+        finalizeSlice();
+        return result;
+      } catch (error) {
+        finalizeSlice();
+        throw error;
+      }
     }
 
     result.original = fn;
@@ -1162,7 +1261,9 @@ export class Tracer {
    * @returns {Array} Массив имен слайсов
    */
   static getActiveSlices() {
-    return Array.from(Tracer[stateConfigKey].keys());
+    return Array.from(Tracer[stateConfigKey].keys()).filter(
+      (sliceName) => Tracer.tracerState.get(sliceName) === true,
+    );
   }
 
   /**
@@ -1184,15 +1285,114 @@ export class Tracer {
    * @returns {Array} Массив имен слайсов
    */
   static getRegistredSlices() {
-    const state = Tracer.tracerState;
+    return Array.from(Tracer[stateConfigKey].keys());
+  }
 
-    const result = [];
+  /**
+   * Экспортирует зарегистрированные сценарии (слайсы) в переносимый объект.
+   * @param {object} [options]
+   * @param {boolean} [options.includeFunctions=true] - Сохранять predicate/beforeCall/afterCall как строки функций
+   * @returns {object} Переносимая модель сценариев
+   */
+  static exportScenarios(options = {}) {
+    const includeFunctions = options.includeFunctions !== false;
+    const stateConfig = Tracer[stateConfigKey];
 
-    state._store.forEach((value, key) => {
-      result.push(key);
+    const slices = Array.from(stateConfig.entries()).map(([name, sliceConfig]) => {
+      const config = sliceConfig.config || {};
+      const normalizeFn = (fn) => {
+        if (!includeFunctions) {
+          return undefined;
+        }
+        return typeof fn === "function" ? fn.toString() : undefined;
+      };
+
+      return {
+        name,
+        description: config.description,
+        initial: Object.prototype.hasOwnProperty.call(config, "initial")
+          ? config.initial
+          : Tracer.tracerState.get(name),
+        disabled: Boolean(sliceConfig.disabled),
+        predicate: normalizeFn(config.predicate),
+        beforeCall: normalizeFn(config.beforeCall),
+        afterCall: normalizeFn(config.afterCall),
+      };
     });
 
-    return result;
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      slices,
+    };
+  }
+
+  /**
+   * Импортирует переносимую модель сценариев.
+   * @param {object} payload - Объект, полученный из exportScenarios
+   * @param {object} [options]
+   * @param {boolean} [options.overwrite=true] - Перезаписать существующие слайсы с тем же именем
+   * @param {boolean} [options.activate=true] - Подписать импортированные слайсы на события
+   * @param {(source: string) => Function} [options.functionParser] - Кастомный парсер функций из строки
+   * @returns {typeof Tracer}
+   */
+  static importScenarios(payload, options = {}) {
+    if (!payload || !Array.isArray(payload.slices)) {
+      throw new Error("Некорректный payload сценариев: ожидается объект c массивом slices");
+    }
+
+    const overwrite = options.overwrite !== false;
+    const activate = options.activate !== false;
+
+    const parseFunction = (source) => {
+      if (typeof source !== "string" || source.trim() === "") {
+        return undefined;
+      }
+      if (typeof options.functionParser === "function") {
+        return options.functionParser(source);
+      }
+      return new Function(`return (${source});`)();
+    };
+
+    payload.slices.forEach((slice) => {
+      const { name } = slice;
+      if (!name) {
+        return;
+      }
+
+      const exists = Tracer[stateConfigKey].has(name);
+      if (exists && !overwrite) {
+        return;
+      }
+
+      if (exists && overwrite) {
+        Tracer.stopTraceSlice(name);
+        Tracer.stopObserveSlice(name);
+        Tracer[stateConfigKey].delete(name);
+      }
+
+      const predicate = parseFunction(slice.predicate) || (() => false);
+      const beforeCall = parseFunction(slice.beforeCall) || (() => true);
+      const afterCall = parseFunction(slice.afterCall) || (() => false);
+
+      Tracer.registerSlice(name, {
+        predicate,
+        beforeCall,
+        afterCall,
+        initial: slice.initial,
+        description: slice.description,
+      });
+
+      if (activate) {
+        Tracer.observeSlice(name);
+      }
+
+      if (slice.disabled) {
+        Tracer.disableSlice(name);
+      }
+    });
+
+    return Tracer;
   }
 
   static isX2t() {
