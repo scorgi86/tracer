@@ -200,6 +200,12 @@ export const wrapProperty = (target, parentPropName, className) => {
                 callStack: ExecutionContext.getCurrentContext()
             });
 
+            if (typeof value === 'object' && value !== null) {
+                const wrappedValue = wrapProperty(value, propPath, className);
+                Reflect.set(thisTarget, subProp, wrappedValue);
+                return wrappedValue;
+            }
+
             return value;
         },
 
@@ -255,6 +261,10 @@ export const wrapProperty = (target, parentPropName, className) => {
  */
 export const wrapProxyPropDescriptor = (target, propName, className) => {
     const d = Object.getOwnPropertyDescriptor(target, propName);
+
+    if (!d) {
+        return;
+    }
     
     if (d.configurable === false) {
         return;
@@ -374,8 +384,8 @@ export function traverse(obj, className = '') {
                     Object.defineProperty(obj, fnKey, { ...descriptor, value: proxyFn });
                 }
             }
-            else if (!wrapProxyPropDescriptor.isProxy(descriptor)) {
-                // wrapProxyPropDescriptor(obj, fnKey, className);
+            else if (!wrapProxyPropDescriptor.isProxy(obj, fnKey)) {
+                wrapProxyPropDescriptor(obj, fnKey, className);
             }
         } catch (e) {
             console.error(e)
