@@ -22,6 +22,7 @@
     "build": "vite build",
     "build:types": "tsc --emitDeclarationOnly",
     "prepublishOnly": "npm run build",
+    "pretest": "npm run build",
     "test": "jest",
     "test:coverage": "jest --coverage"
   },
