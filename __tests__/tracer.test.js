@@ -4,9 +4,9 @@ let seq = 0;
 const nextName = (prefix) => `${prefix}_${Date.now()}_${seq++}`;
 
 const flushTraceSubscriptions = () => {
-  Tracer.traceClear();
-  Tracer.traceCallsClear();
-  Tracer.tracePropertiesClear();
+  Tracer.untraceAll();
+  Tracer.untraceCalls();
+  Tracer.untraceProperties();
 };
 
 describe("Tracer", () => {
@@ -16,7 +16,7 @@ describe("Tracer", () => {
 
   test("createProxyFn + trace emits before/after function events", () => {
     const events = [];
-    Tracer.trace((event) => events.push(event));
+    Tracer.traceAll((event) => events.push(event));
 
     const add = Tracer.createProxyFn((a, b) => a + b, "add");
     const result = add(2, 3);
@@ -44,7 +44,7 @@ describe("Tracer", () => {
     const events = [];
     const target = { value: 1 };
     Tracer.observeProperty(target, "value", "Counter");
-    Tracer.trace((event) => events.push(event));
+    Tracer.traceAll((event) => events.push(event));
 
     const current = target.value;
     target.value = current + 2;
@@ -54,10 +54,10 @@ describe("Tracer", () => {
     expect(events[1]).toMatchObject({ propName: "value", className: "Counter", value: 3 });
   });
 
-  test("wrapValueWithProxy tracks nested get/set paths", () => {
+  test("observePropertyObject tracks nested get/set paths", () => {
     const events = [];
     const nested = { city: "Ekb", zip: 620000 };
-    const wrapped = Tracer.wrapValueWithProxy(nested, "address", "User");
+    const wrapped = Tracer.observePropertyObject(nested, "address", "User");
     Tracer.traceProperties((event) => events.push(event));
 
     const city = wrapped.city;
@@ -68,10 +68,10 @@ describe("Tracer", () => {
     expect(events.map((e) => e.eventType)).toEqual(["propertyGet", "propertySet"]);
   });
 
-  test("observePropertyAll tracks all non-function own props", () => {
+  test("observeAllProperties tracks all non-function own props", () => {
     const target = { a: 1, b: 2, fn() { return 1; } };
     const events = [];
-    Tracer.observePropertyAll(target, "Obj");
+    Tracer.observeAllProperties(target, "Obj");
     Tracer.traceProperties((event) => events.push(event));
 
     const a = target.a;
@@ -125,7 +125,7 @@ describe("Tracer", () => {
       afterCall: () => false,
       initial: false,
     });
-    Tracer.traceSlice(sliceName, (event) => tracedEvents.push(event));
+    Tracer.traceBySlice(sliceName, (event) => tracedEvents.push(event));
 
     fn(2);
 
@@ -133,7 +133,7 @@ describe("Tracer", () => {
     expect(tracedEvents[0].place).toBe("before");
   });
 
-  test("traceSliceSeq triggers only when all slices are active", () => {
+  test("traceBySliceSequence triggers only when all slices are active", () => {
     const s1 = nextName("seq_a");
     const s2 = nextName("seq_b");
     const events = [];
@@ -149,7 +149,7 @@ describe("Tracer", () => {
       beforeCall: () => true,
       afterCall: () => false,
     });
-    Tracer.traceSliceSeq([s1, s2], (event) => events.push(event));
+    Tracer.traceBySliceSequence([s1, s2], (event) => events.push(event));
 
     fn();
 
@@ -157,26 +157,26 @@ describe("Tracer", () => {
     expect(events[0].place).toBe("before");
   });
 
-  test("defineSliceFromFn resets state for async function", async () => {
+  test("defineSliceByFunction resets state for async function", async () => {
     const sliceName = nextName("from_fn");
     let resolveAsync;
     const pending = new Promise((resolve) => {
       resolveAsync = resolve;
     });
 
-    const wrapped = Tracer.defineSliceFromFn(sliceName, async () => {
+    const wrapped = Tracer.defineSliceByFunction(sliceName, async () => {
       await pending;
       return "ok";
     });
 
     const runPromise = wrapped();
-    expect(Tracer.getActiveSlices()).toContain(sliceName);
+    expect(Tracer.getEnabledSlices()).toContain(sliceName);
 
     resolveAsync();
     const result = await runPromise;
 
     expect(result).toBe("ok");
-    expect(Tracer.getActiveSlices()).not.toContain(sliceName);
+    expect(Tracer.getEnabledSlices()).not.toContain(sliceName);
   });
 
   test("traceCalls/traceProperties and clear methods unsubscribe correctly", () => {
@@ -194,8 +194,8 @@ describe("Tracer", () => {
     expect(calls.length).toBe(2);
     expect(props.length).toBe(1);
 
-    Tracer.traceCallsClear();
-    Tracer.tracePropertiesClear();
+    Tracer.untraceCalls();
+    Tracer.untraceProperties();
     fn();
     target.value;
 
@@ -203,7 +203,7 @@ describe("Tracer", () => {
     expect(props.length).toBe(1);
   });
 
-  test("exportScenarios/importScenarios roundtrip", () => {
+  test("exportSliceScenarios/importSliceScenarios roundtrip", () => {
     const sourceSlice = nextName("exported");
     const targetSlice = nextName("imported");
     const fn = Tracer.createProxyFn(() => "ok", "act");
@@ -217,23 +217,91 @@ describe("Tracer", () => {
       description: "test scenario",
     });
 
-    const payload = Tracer.exportScenarios();
+    const payload = Tracer.exportSliceScenarios();
     const sourceConfig = payload.slices.find((x) => x.name === sourceSlice);
     sourceConfig.name = targetSlice;
     payload.slices = [sourceConfig];
 
-    Tracer.importScenarios(payload, { overwrite: true, activate: true });
-    Tracer.traceSlice(targetSlice, (event) => hits.push(event));
+    Tracer.importSliceScenarios(payload, { overwrite: true, activate: true });
+    Tracer.traceBySlice(targetSlice, (event) => hits.push(event));
     fn();
 
     expect(hits).toHaveLength(1);
     expect(hits[0].place).toBe("before");
-    expect(Tracer.getRegistredSlices()).toContain(targetSlice);
+    expect(Tracer.getRegisteredSlices()).toContain(targetSlice);
   });
 
-  test("importScenarios validates payload", () => {
-    expect(() => Tracer.importScenarios(null)).toThrow();
-    expect(() => Tracer.importScenarios({})).toThrow();
-    expect(() => Tracer.importScenarios({ slices: {} })).toThrow();
+  test("importSliceScenarios validates payload", () => {
+    expect(() => Tracer.importSliceScenarios(null)).toThrow();
+    expect(() => Tracer.importSliceScenarios({})).toThrow();
+    expect(() => Tracer.importSliceScenarios({ slices: {} })).toThrow();
+  });
+
+  test("ReportSliceDiff: creates slice from start/end predicates and tracks calls inside", () => {
+    const sliceName = nextName("report_slice");
+    const fn = Tracer.createProxyFn((value) => value, "step");
+    const report = new Tracer.reports.ReportSliceDiff({
+      tracer: Tracer,
+      sliceName,
+      startPredicate: (event) => event.fnKey === "step" && event.args[0] === "start",
+      endPredicate: (event) => event.fnKey === "step" && event.args[0] === "stop",
+    }).start();
+
+    fn("outside-1");
+    fn("start");
+    fn("inside-1");
+    fn("inside-2");
+    fn("stop");
+    fn("outside-2");
+
+    const calls = report.getCalls();
+    expect(calls.map((x) => x.args[0])).toEqual(["start", "inside-1", "inside-2", "stop"]);
+    expect(report.getDiffs()).toHaveLength(3);
+  });
+
+  test("ReportSliceDiff: calculates diffs between sequential calls", () => {
+    const sliceName = nextName("report_diff");
+    const fn = Tracer.createProxyFn((value) => value, "phase");
+    const logs = [];
+    const report = new Tracer.reports.ReportSliceDiff({
+      tracer: Tracer,
+      sliceName,
+      startPredicate: (event) => event.fnKey === "phase" && event.args[0] === "start",
+      endPredicate: (event) => event.fnKey === "phase" && event.args[0] === "end",
+      logProvider: {
+        log(value) {
+          logs.push(value);
+        },
+      },
+    }).start();
+
+    fn("start");
+    fn("A");
+    fn("B");
+    fn("end");
+
+    const diffs = report.getDiffs();
+    expect(diffs).toHaveLength(3);
+    expect(diffs[0].changed.args).toBe(true);
+    expect(logs.length).toBe(3);
+  });
+
+  test("ReportSliceDiff: getSourceFunctionsText joins source text into one string", () => {
+    const report = new Tracer.reports.ReportSliceDiff({
+      tracer: Tracer,
+      sliceName: nextName("source_text"),
+      startPredicate: (event) => event.fnKey === "start",
+      endPredicate: (event) => event.fnKey === "end",
+    });
+
+    const text = report.getSourceFunctionsText();
+
+    expect(typeof text).toBe("string");
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).toContain("startPredicate:");
+    expect(text).toContain("endPredicate:");
+    expect(text).toContain("shouldTrack:");
+    expect(text).toContain("diffBuilder:");
   });
 });
+

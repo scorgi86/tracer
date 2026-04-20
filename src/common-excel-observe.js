@@ -21,8 +21,8 @@ function wrapConstructor(OriginalConstructor, className) {
     };
 }
 
-// Tracer.observePrototypeFromExportAll(window['AscCommonWord']);
-// Tracer.observePrototypeFromExportAll(window.AscFormat);
+        // Tracer.observePrototypesFromExports(window['AscCommonWord']);
+        // Tracer.observePrototypesFromExports(window.AscFormat);
 
 window['AscCommonWord'] = new Proxy(window['AscCommonWord'], {
     get(target, prop) {

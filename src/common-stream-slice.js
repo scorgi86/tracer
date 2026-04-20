@@ -99,7 +99,7 @@ export const LoadDocumentSlice = () =>
         },
         beforeCall: () => true,
         afterCall: () => {
-            Tracer.stopTraceSlice('LoadDocument');
+            Tracer.untraceBySlice('LoadDocument');
             return false;
         }
     });
@@ -112,7 +112,7 @@ export const WriteDocumentSlice = () => {
         },
         beforeCall: () => true,
         afterCall: () => {
-            Tracer.stopTraceSlice('LoadDocument');
+            Tracer.untraceBySlice('LoadDocument');
             return false;
         }
     });
@@ -126,7 +126,7 @@ export const OpenDocumentFromBinSlice = () =>
         },
         beforeCall: () => true,
         afterCall: () => {
-            Tracer.stopTraceSlice('OpenDocumentFromBin');
+            Tracer.untraceBySlice('OpenDocumentFromBin');
             return false;
         }
     });

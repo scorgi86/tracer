@@ -22,9 +22,9 @@ function wrapConstructor(OriginalConstructor, className) {
 }
 
 export const runObserve = () => {
-    Tracer.observePrototypeFromExportAll(window['AscCommonWord']);
-    Tracer.observePrototypeFromExportAll(window.AscFormat);
-    Tracer.observePrototypeFromExportAll(window.AscWord);
+    Tracer.observePrototypesFromExports(window['AscCommonWord']);
+    Tracer.observePrototypesFromExports(window.AscFormat);
+    Tracer.observePrototypesFromExports(window.AscWord);
 
     window['AscCommonWord'] = new Proxy(window['AscCommonWord'], {
         get(target, prop) {
@@ -47,8 +47,8 @@ export const runObserve = () => {
     window["AscCommonWord"].BinaryFileReader = wrapConstructor(window['AscCommonWord'].BinaryFileReader);
     window["AscCommonWord"].BinaryFileWriter = wrapConstructor(window['AscCommonWord'].BinaryFileWriter);
 
-    Tracer.observeFromExportAll(window.Asc);
-    Tracer.observeFromExportAll(window.AscCommonWord);
+    Tracer.observeFromExports(window.Asc);
+    Tracer.observeFromExports(window.AscCommonWord);
 
     Tracer
         .observe(Object.getPrototypeOf(window['AscCommon'].g_clipboardBase), 'CClipboardBase')
