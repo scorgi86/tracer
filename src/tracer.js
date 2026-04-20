@@ -50,7 +50,7 @@ const tracePropertyCallback = [];
  * });
  * 
  * // Подписка на активность слайса
- * Tracer.traceSlice('mathOperations', (event) => {
+ * Tracer.traceBySlice('mathOperations', (event) => {
  *   console.log('Математическая операция:', event.fullName, event.args);
  * });
  */
@@ -78,7 +78,7 @@ export class Tracer {
    * const tracedFetch = Tracer.createProxyFn(fetchData, 'fetchData');
    * 
    * // Подписка на события
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.eventType === 'functionCall') {
    *     console.log(`Вызвана функция: ${event.fullName}`);
    *     console.log(`Аргументы:`, event.args);
@@ -135,7 +135,7 @@ export class Tracer {
    * const service = new TracedUserService('https://api.example.com');
    * 
    * // Все вызовы методов будут отслеживаться
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.className === 'UserService') {
    *     console.log(`[UserService] ${event.place === 'before' ? '→' : '←'} ${event.fnKey}`);
    *   }
@@ -186,7 +186,7 @@ export class Tracer {
    * Tracer.observeProperty(config, 'timeout', 'Config');
    * 
    * // Подписываемся на события доступа к свойствам
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.eventType === 'propertyGet') {
    *     console.log(`Чтение свойства: ${event.propName}`);
    *   }
@@ -227,11 +227,11 @@ export class Tracer {
    * };
    * 
    * // Оборачиваем свойство address в прокси
-   * const wrappedAddress = Tracer.wrapValueWithProxy(user.address, 'address', 'User');
+   * const wrappedAddress = Tracer.observePropertyObject(user.address, 'address', 'User');
    * user.address = wrappedAddress;
    * 
    * // Теперь доступ к вложенным свойствам отслеживается
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.propName?.startsWith('address.')) {
    *     console.log(`Доступ к адресу: ${event.propName} = ${event.value}`);
    *   }
@@ -240,7 +240,7 @@ export class Tracer {
    * console.log(user.address.city); // Отслеживается
    * user.address.street = 'New Street'; // Отслеживается
    */
-  static wrapValueWithProxy(target, propName, className) {
+  static observePropertyObject(target, propName, className) {
     return wrapProperty(target, propName, className);
   }
 
@@ -260,10 +260,10 @@ export class Tracer {
    * };
    * 
    * // Отслеживаем все свойства объекта
-   * Tracer.observePropertyAll(settings, 'Settings');
+   * Tracer.observeAllProperties(settings, 'Settings');
    * 
    * let changes = [];
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.eventType === 'propertySet') {
    *     changes.push({
    *       property: event.propName,
@@ -278,7 +278,7 @@ export class Tracer {
    * 
    * console.log('Изменения настроек:', changes);
    */
-  static observePropertyAll(target, className) {
+  static observeAllProperties(target, className) {
     Object.keys(target)
       .filter((key) => typeof target[key] !== "function")
       .forEach((propName) => {
@@ -316,7 +316,7 @@ export class Tracer {
    * Tracer.observe(complexObject, 'ComplexObject');
    * 
    * // Все вызовы методов на любом уровне будут отслеживаться
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.eventType === 'functionCall') {
    *     console.log(`Вызов: ${event.fullName}`);
    *   }
@@ -374,7 +374,7 @@ export class Tracer {
    *   description: 'Отслеживание транзакций базы данных'
    * });
    * 
-   * Tracer.traceSlice('transaction', (event) => {
+   * Tracer.traceBySlice('transaction', (event) => {
    *   console.log(`Транзакция ${event.place === 'before' ? 'начата' : 'завершена'}`);
    *   if (event.place === 'after') {
    *     console.log('Результат:', event.value);
@@ -410,7 +410,7 @@ export class Tracer {
    * Tracer.observeAll(services);
    * 
    * // Логируем все вызовы сервисов
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.className?.includes('Service')) {
    *     console.log(`[${event.className}] ${event.fnKey} вызван с аргументами:`, event.args);
    *   }
@@ -455,7 +455,7 @@ export class Tracer {
    *   afterCall: () => false
    * });
    * 
-   * Tracer.traceSlice('modelOperations', (event) => {
+   * Tracer.traceBySlice('modelOperations', (event) => {
    *   console.log(`${event.className}.${event.fnKey} - ${event.place === 'before' ? 'start' : 'end'}`);
    * });
    * 
@@ -491,13 +491,13 @@ export class Tracer {
    * import * as services from './module.js';
    * 
    * // Автоматически отслеживаем все экспортированные классы
-   * Tracer.observeFromExportAll(services);
+   * Tracer.observeFromExports(services);
    * 
    * // Все методы UserService и ProductService будут отслеживаться
    * const userService = new services.UserService();
    * userService.createUser({ name: 'John' }); // Отслеживается
    */
-  static observeFromExportAll(exportTarget) {
+  static observeFromExports(exportTarget) {
     const classList = Object.keys(exportTarget).filter((key) =>
       exportTarget[key]
         ? Object.keys(Object.getOwnPropertyDescriptors(exportTarget[key]))
@@ -520,7 +520,7 @@ export class Tracer {
    * @example
    * import * as models from './models/index.js';
    * 
-   * const observedModels = Tracer.observePrototypeFromExportAll(models);
+   * const observedModels = Tracer.observePrototypesFromExports(models);
    * 
    * console.log('Наблюдаемые модели:', Array.from(observedModels.keys()));
    * 
@@ -528,7 +528,7 @@ export class Tracer {
    * const user = new models.User();
    * await user.validate(); // Отслеживается
    */
-  static observePrototypeFromExportAll(exportTarget) {
+  static observePrototypesFromExports(exportTarget) {
     let map = new Map();
 
     const classList = Object.keys(exportTarget).filter((key) => {
@@ -547,7 +547,7 @@ export class Tracer {
     return map;
   }
 
-  static registerSlice(streamSliceName, config) {
+  static registerSliceDefinition(streamSliceName, config) {
     const stateConfig = Tracer[stateConfigKey];
 
     if (stateConfig.has(streamSliceName)) {
@@ -622,7 +622,7 @@ export class Tracer {
    *   description: 'Отслеживание всех API запросов'
    * });
    * 
-   * Tracer.traceSlice('apiRequests', (event) => {
+   * Tracer.traceBySlice('apiRequests', (event) => {
    *   if (event.place === 'before') {
    *     console.log(`📡 Запрос к API: ${event.args[0].url}`);
    *   } else {
@@ -634,7 +634,7 @@ export class Tracer {
    * Tracer.defineSlice('performance', (args) => args.fnKey === 'heavyOperation');
    * 
    * const timings = new Map();
-   * Tracer.traceSlice('performance', (event) => {
+   * Tracer.traceBySlice('performance', (event) => {
    *   if (event.place === 'before') {
    *     timings.set(event.fullName, Date.now());
    *   } else {
@@ -651,14 +651,14 @@ export class Tracer {
    *   description: 'Отслеживание ошибок API'
    * });
    * 
-   * Tracer.traceSlice('errorTracking', (event) => {
+   * Tracer.traceBySlice('errorTracking', (event) => {
    *   console.error(`❌ Ошибка в ${event.fullName}:`, event.args[0]);
    * });
    */
   static defineSlice(streamSliceName, config) {
-    Tracer.registerSlice(streamSliceName, config);
+    Tracer.registerSliceDefinition(streamSliceName, config);
 
-    Tracer.observeSlice(streamSliceName);
+    Tracer.enableSlice(streamSliceName);
 
     return Tracer;
   }
@@ -670,11 +670,11 @@ export class Tracer {
    * 
    * @example
    * // Останавливаем отслеживание API запросов
-   * Tracer.stopObserveSlice('apiRequests');
+   * Tracer.disableSliceListeners('apiRequests');
    * 
    * // Теперь события для этого слайса не генерируются
    */
-  static stopObserveSlice(streamSliceName) {
+  static disableSliceListeners(streamSliceName) {
     const stateConfig = Tracer[stateConfigKey];
     const sliceConfig = stateConfig.get(streamSliceName);
 
@@ -691,9 +691,9 @@ export class Tracer {
    * 
    * @example
    * // Возобновляем отслеживание после остановки
-   * Tracer.observeSlice('apiRequests');
+   * Tracer.enableSlice('apiRequests');
    */
-  static observeSlice(streamSliceName) {
+  static enableSlice(streamSliceName) {
     const stateConfig = Tracer[stateConfigKey];
     const sliceConfig = stateConfig.get(streamSliceName);
 
@@ -713,16 +713,16 @@ export class Tracer {
    * 
    * @example
    * // Отслеживаем только вызовы при активном слайсе
-   * Tracer.traceSlice('performance', (event) => {
+   * Tracer.traceBySlice('performance', (event) => {
    *   console.log(`[PERF] ${event.fullName} - ${event.place}`);
    * });
    * 
    * // Несколько колбеков для одного слайса
-   * Tracer.traceSlice('apiRequests', logToConsole);
-   * Tracer.traceSlice('apiRequests', sendToAnalytics);
-   * Tracer.traceSlice('apiRequests', updateMetrics);
+   * Tracer.traceBySlice('apiRequests', logToConsole);
+   * Tracer.traceBySlice('apiRequests', sendToAnalytics);
+   * Tracer.traceBySlice('apiRequests', updateMetrics);
    */
-  static traceSlice(sliceName, callback) {
+  static traceBySlice(sliceName, callback) {
 
     if (!sliceName || !callback) {
       throw new Error("Укажите имя контекста и колбек!");
@@ -762,19 +762,19 @@ export class Tracer {
    * 
    * @example
    * // Выполнить только при первом запросе
-   * Tracer.traceSliceOnce('firstRequest', (event) => {
+   * Tracer.traceBySliceOnce('firstRequest', (event) => {
    *   console.log('Первый API запрос:', event.args[0].url);
    * });
    * 
    * // Автоматически отпишется после первого срабатывания
    */
-  static traceSliceOnce(sliceName, callback) {
+  static traceBySliceOnce(sliceName, callback) {
     const wrappedCallback = (...args) => {
       callback(...args);
-      Tracer.stopTraceSlice(sliceName, wrappedCallback);
+      Tracer.untraceBySlice(sliceName, wrappedCallback);
     }
 
-    Tracer.traceSlice(sliceName, wrappedCallback);
+    Tracer.traceBySlice(sliceName, wrappedCallback);
   }
 
   /**
@@ -785,18 +785,18 @@ export class Tracer {
    * 
    * @example
    * // Отслеживаем только когда активны оба слайса
-   * Tracer.traceSliceSeq(['auth', 'payment'], (event) => {
+   * Tracer.traceBySliceSequence(['auth', 'payment'], (event) => {
    *   console.log('Авторизованный платеж:', event.fullName);
    * });
    * 
    * // Сложная логика с несколькими условиями
-   * Tracer.traceSliceSeq(['debug', 'performance', 'database'], (event) => {
+   * Tracer.traceBySliceSequence(['debug', 'performance', 'database'], (event) => {
    *   // Выполнится только когда все три слайса активны
    *   console.log('Полная отладка:', event);
    * });
    */
-  static traceSliceSeq(sliceSeq, callback) {
-    Tracer.trace((args) => {
+  static traceBySliceSequence(sliceSeq, callback) {
+    Tracer.traceAll((args) => {
       const isTraceSeq = sliceSeq.every(
         (name) => args.tracerState.get(name) === true,
       );
@@ -818,14 +818,14 @@ export class Tracer {
    * @example
    * // Отписать конкретный колбек
    * const myCallback = (event) => console.log(event);
-   * Tracer.traceSlice('apiRequests', myCallback);
+   * Tracer.traceBySlice('apiRequests', myCallback);
    * // ... позже
-   * Tracer.stopTraceSlice('apiRequests', myCallback);
+   * Tracer.untraceBySlice('apiRequests', myCallback);
    * 
    * // Отписать все колбеки слайса
-   * Tracer.stopTraceSlice('apiRequests');
+   * Tracer.untraceBySlice('apiRequests');
    */
-  static stopTraceSlice(sliceName, callback) {
+  static untraceBySlice(sliceName, callback) {
 
     const sliceConfig = Tracer[stateConfigKey].get(sliceName);
     
@@ -944,7 +944,7 @@ export class Tracer {
    * 
    * @example
    * // Логирование всех событий
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   console.log({
    *     type: event.eventType,
    *     time: new Date().toISOString(),
@@ -958,7 +958,7 @@ export class Tracer {
    *   propertyAccess: 0
    * };
    * 
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.eventType === 'functionCall') {
    *     metrics.functionCalls++;
    *   } else if (event.eventType.includes('property')) {
@@ -967,14 +967,14 @@ export class Tracer {
    * });
    * 
    * // Фильтрация и анализ
-   * Tracer.trace((event) => {
+   * Tracer.traceAll((event) => {
    *   if (event.fullName?.includes('database')) {
    *     // Анализируем запросы к БД
    *     analyzeQuery(event);
    *   }
    * });
    */
-  static trace(callback) {
+  static traceAll(callback) {
 
     if (!callback) {
       throw new Error("Укажите колбек!");
@@ -1032,11 +1032,11 @@ export class Tracer {
    * 
    * @example
    * // Останавливаем всю трассировку
-   * Tracer.traceClear();
+   * Tracer.untraceAll();
    * 
    * // Теперь события не логируются
    */
-  static traceClear() {
+  static untraceAll() {
     traceCallback.forEach((callback) => {
       emitter.unSubscribe("beforeCallMethod", callback);
       emitter.unSubscribe("afterCallMethod", callback);
@@ -1051,7 +1051,7 @@ export class Tracer {
    * Очистка подписок на события вызовов функций.
    * @returns {typeof Tracer}
    */
-  static traceCallsClear() {
+  static untraceCalls() {
     traceCallCallback.forEach((callback) => {
       emitter.unSubscribe("beforeCallMethod", callback);
       emitter.unSubscribe("afterCallMethod", callback);
@@ -1064,7 +1064,7 @@ export class Tracer {
    * Очистка подписок на события чтения/записи свойств.
    * @returns {typeof Tracer}
    */
-  static tracePropertiesClear() {
+  static untraceProperties() {
     tracePropertyCallback.forEach((callback) => {
       emitter.unSubscribe("propertyGet", callback);
       emitter.unSubscribe("propertySet", callback);
@@ -1144,9 +1144,9 @@ export class Tracer {
     return ExecutionContext.getCurrentContext();
   }
 
-  static defineSliceFromCall(sliceName, target, targetFnName, predicate) {
+  static defineSliceByCall(sliceName, target, targetFnName, predicate) {
     
-    Tracer.registerSlice(sliceName, predicate);
+    Tracer.registerSliceDefinition(sliceName, predicate);
     
     const originalFn = target[targetFnName];
       
@@ -1187,7 +1187,7 @@ export class Tracer {
    * 
    * @example
    * // Создаем функцию, которая будет активна только во время выполнения
-   * const tracedDbQuery = Tracer.defineSliceFromFn('database', async (sql) => {
+   * const tracedDbQuery = Tracer.defineSliceByFunction('database', async (sql) => {
    *   return await db.query(sql);
    * });
    * 
@@ -1195,13 +1195,13 @@ export class Tracer {
    * const result = await tracedDbQuery('SELECT * FROM users');
    * 
    * // Можно комбинировать с другими слайсами
-   * Tracer.traceSlice('database', (event) => {
+   * Tracer.traceBySlice('database', (event) => {
    *   console.log('Запрос к БД:', event.args[0]);
    * });
    */
-  static defineSliceFromFn = (sliceName, fn) => {
+  static defineSliceByFunction = (sliceName, fn) => {
     
-    Tracer.registerSlice(sliceName, () => {});
+    Tracer.registerSliceDefinition(sliceName, () => {});
 
     const result = function(...args) {
       Tracer.tracerState.set(sliceName, true);
@@ -1236,17 +1236,17 @@ export class Tracer {
    * 
    * @example
    * // Активируем слайс только при вызове конкретного метода
-   * Tracer.defineSliceOnCall('userCreation', 'UserService.create');
+   * Tracer.defineSliceByFunctionName('userCreation', 'UserService.create');
    * 
-   * Tracer.traceSlice('userCreation', (event) => {
+   * Tracer.traceBySlice('userCreation', (event) => {
    *   console.log('Создание пользователя:', event.args[0]);
    * });
    * 
    * // Множественные слайсы для разных методов
-   * Tracer.defineSliceOnCall('userUpdate', 'UserService.update');
-   * Tracer.defineSliceOnCall('userDelete', 'UserService.delete');
+   * Tracer.defineSliceByFunctionName('userUpdate', 'UserService.update');
+   * Tracer.defineSliceByFunctionName('userDelete', 'UserService.delete');
    */
-  static defineSliceOnCall(sliceName, fnName) {
+  static defineSliceByFunctionName(sliceName, fnName) {
     if (!sliceName || !fnName) {
       throw new Error('sliceName и fnName обязательны');
     }
@@ -1260,7 +1260,7 @@ export class Tracer {
    * Получить список всех активных слайсов
    * @returns {Array} Массив имен слайсов
    */
-  static getActiveSlices() {
+  static getEnabledSlices() {
     return Array.from(Tracer[stateConfigKey].keys()).filter(
       (sliceName) => Tracer.tracerState.get(sliceName) === true,
     );
@@ -1275,7 +1275,7 @@ export class Tracer {
     const config = Tracer[stateConfigKey].get(sliceName);
     if (config && !config.disabled) {
       config.disabled = true;
-      Tracer.stopObserveSlice(sliceName);
+      Tracer.disableSliceListeners(sliceName);
     }
     return Tracer;
   }
@@ -1284,7 +1284,7 @@ export class Tracer {
    * Вернет список зарегистрированных слайсов
    * @returns {Array} Массив имен слайсов
    */
-  static getRegistredSlices() {
+  static getRegisteredSlices() {
     return Array.from(Tracer[stateConfigKey].keys());
   }
 
@@ -1294,7 +1294,7 @@ export class Tracer {
    * @param {boolean} [options.includeFunctions=true] - Сохранять predicate/beforeCall/afterCall как строки функций
    * @returns {object} Переносимая модель сценариев
    */
-  static exportScenarios(options = {}) {
+  static exportSliceScenarios(options = {}) {
     const includeFunctions = options.includeFunctions !== false;
     const stateConfig = Tracer[stateConfigKey];
 
@@ -1329,14 +1329,14 @@ export class Tracer {
 
   /**
    * Импортирует переносимую модель сценариев.
-   * @param {object} payload - Объект, полученный из exportScenarios
+   * @param {object} payload - Объект, полученный из exportSliceScenarios
    * @param {object} [options]
    * @param {boolean} [options.overwrite=true] - Перезаписать существующие слайсы с тем же именем
    * @param {boolean} [options.activate=true] - Подписать импортированные слайсы на события
    * @param {(source: string) => Function} [options.functionParser] - Кастомный парсер функций из строки
    * @returns {typeof Tracer}
    */
-  static importScenarios(payload, options = {}) {
+  static importSliceScenarios(payload, options = {}) {
     if (!payload || !Array.isArray(payload.slices)) {
       throw new Error("Некорректный payload сценариев: ожидается объект c массивом slices");
     }
@@ -1366,8 +1366,8 @@ export class Tracer {
       }
 
       if (exists && overwrite) {
-        Tracer.stopTraceSlice(name);
-        Tracer.stopObserveSlice(name);
+        Tracer.untraceBySlice(name);
+        Tracer.disableSliceListeners(name);
         Tracer[stateConfigKey].delete(name);
       }
 
@@ -1375,7 +1375,7 @@ export class Tracer {
       const beforeCall = parseFunction(slice.beforeCall) || (() => true);
       const afterCall = parseFunction(slice.afterCall) || (() => false);
 
-      Tracer.registerSlice(name, {
+      Tracer.registerSliceDefinition(name, {
         predicate,
         beforeCall,
         afterCall,
@@ -1384,7 +1384,7 @@ export class Tracer {
       });
 
       if (activate) {
-        Tracer.observeSlice(name);
+        Tracer.enableSlice(name);
       }
 
       if (slice.disabled) {
@@ -1395,7 +1395,7 @@ export class Tracer {
     return Tracer;
   }
 
-  static isX2t() {
+  static isX2tEnvironment() {
     return typeof EventTarget === 'undefiend';
   }
 
@@ -1418,3 +1418,4 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { Tracer };
 }
+

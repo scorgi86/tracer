@@ -26,8 +26,8 @@ function wrapConstructor(OriginalConstructor, className) {
 }
 
 export const runObserve = () => {
-    Tracer.observePrototypeFromExportAll(window['AscCommonSlide']);
-    Tracer.observePrototypeFromExportAll(window.AscFormat);
+    Tracer.observePrototypesFromExports(window['AscCommonSlide']);
+    Tracer.observePrototypesFromExports(window.AscFormat);
     // Tracer.observeOnSet(window, 'className', Tracer.wrapConstructor)
 
     window['AscCommonSlide'] = new Proxy(window['AscCommonSlide'], {
