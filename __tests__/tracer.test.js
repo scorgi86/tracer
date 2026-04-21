@@ -68,6 +68,168 @@ describe("Tracer", () => {
     expect(events.map((e) => e.eventType)).toEqual(["propertyGet", "propertySet"]);
   });
 
+  test("observePropertyObject wraps only first level by default", () => {
+    const events = [];
+    const wrapped = Tracer.observePropertyObject(
+      { nested: { value: 7 } },
+      "root",
+      "DeepObj",
+    );
+    Tracer.traceProperties((event) => events.push(event));
+
+    const nested = wrapped.nested;
+    const value = nested.value;
+
+    expect(value).toBe(7);
+    expect(events.map((e) => e.propName)).toEqual(["root.nested"]);
+  });
+
+  test("observePropertyObject uses non-proxy mode by default", () => {
+    const target = { a: 1 };
+    const wrapped = Tracer.observePropertyObject(target, "root", "Obj");
+
+    expect(wrapped).toBe(target);
+    expect(wrapped.__isProxy).toBeUndefined();
+  });
+
+  test("observePropertyObject ignores proxy mode for objects with own methods", () => {
+    const target = {
+      Read_FromBinary2() {
+        return "ok";
+      },
+    };
+    const wrapped = Tracer.observePropertyObject(target, "element", "Element", {
+      useProxy: true,
+      maxDepth: 2,
+      shouldWrap: () => true,
+    });
+
+    expect(wrapped).toBe(target);
+    expect(wrapped.__isProxy).toBeUndefined();
+    expect(wrapped.Read_FromBinary2()).toBe("ok");
+  });
+
+  test("observePropertyObject supports configurable wrapping depth", () => {
+    const events = [];
+    const wrapped = Tracer.observePropertyObject(
+      { nested: { value: 7 } },
+      "root",
+      "DeepObj",
+      { useProxy: true, maxDepth: 2, shouldWrap: () => true },
+    );
+    Tracer.traceProperties((event) => events.push(event));
+
+    const value = wrapped.nested.value;
+
+    expect(value).toBe(7);
+    expect(events.map((e) => e.propName)).toEqual(["root.nested", "root.nested.value"]);
+  });
+
+  test("observePropertyObject enables wrapping on the fly via condition", () => {
+    const events = [];
+    let isWrapEnabled = false;
+    const wrapped = Tracer.observePropertyObject(
+      { nested: { value: 7 } },
+      "root",
+      "DeepObj",
+      {
+        useProxy: true,
+        maxDepth: 2,
+        shouldWrap: () => isWrapEnabled,
+      },
+    );
+    Tracer.traceProperties((event) => events.push(event));
+
+    const valueBefore = wrapped.nested.value;
+    isWrapEnabled = true;
+    const valueAfter = wrapped.nested.value;
+
+    expect(valueBefore).toBe(7);
+    expect(valueAfter).toBe(7);
+    expect(events.map((e) => e.propName)).toEqual([
+      "root.nested",
+      "root.nested",
+      "root.nested.value",
+    ]);
+  });
+
+  test("observePropertyObject does not break Symbol.toPrimitive access", () => {
+    const wrapped = Tracer.observePropertyObject({ value: 1 }, "payload", "Payload");
+
+    expect(() => Number(wrapped)).not.toThrow();
+    expect(wrapped[Symbol.toPrimitive]).toBeUndefined();
+  });
+
+  test("observePropertyObject keeps class method receiver compatible with private fields", () => {
+    class CGlobalImageLoader {
+      #name = "ok";
+      getName() {
+        return this.#name;
+      }
+    }
+
+    const wrapped = Tracer.observePropertyObject(
+      new CGlobalImageLoader(),
+      "imageLoader",
+      "ImageLoader",
+    );
+
+    expect(() => wrapped.getName()).not.toThrow();
+    expect(wrapped.getName()).toBe("ok");
+  });
+
+  test("observeProperty preserves receiver for accessor getters", () => {
+    const target = {};
+    let child;
+    Object.defineProperty(target, "token", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        if (this !== child) {
+          throw new TypeError("Illegal invocation");
+        }
+        return "ok";
+      },
+    });
+
+    Tracer.observeProperty(target, "token", "Accessor");
+    child = Object.create(target);
+
+    expect(child.token).toBe("ok");
+  });
+
+  test("observeProperty does not replace accessor-set function value with undefined", () => {
+    const target = {
+      _handler: () => "initial",
+      get handler() {
+        return this._handler;
+      },
+      set handler(value) {
+        this._handler = value;
+      },
+    };
+
+    Tracer.observeProperty(target, "handler", "AccessorFunc");
+
+    const nextFn = () => "next";
+    target.handler = nextFn;
+
+    expect(typeof target.handler).toBe("function");
+    expect(target.handler).toBe(nextFn);
+    expect(target.handler()).toBe("next");
+  });
+
+  test("observePropertyObject skips proxying EventTarget host objects", () => {
+    if (typeof EventTarget === "undefined") {
+      return;
+    }
+
+    const host = new EventTarget();
+    const wrapped = Tracer.observePropertyObject(host, "host", "Host");
+
+    expect(wrapped).toBe(host);
+  });
+
   test("observeAllProperties tracks all non-function own props", () => {
     const target = { a: 1, b: 2, fn() { return 1; } };
     const events = [];
@@ -179,6 +341,23 @@ describe("Tracer", () => {
     expect(Tracer.getEnabledSlices()).not.toContain(sliceName);
   });
 
+  test("defineSliceByFunction keeps slice active for nested calls", () => {
+    const sliceName = nextName("nested_fn_slice");
+    let wrapped;
+    const original = (n) => {
+      if (n === 0) {
+        return Tracer.tracerState.get(sliceName);
+      }
+      return wrapped(n - 1);
+    };
+    wrapped = Tracer.defineSliceByFunction(sliceName, original);
+
+    const result = wrapped(3);
+
+    expect(result).toBe(true);
+    expect(Tracer.tracerState.get(sliceName)).toBe(false);
+  });
+
   test("traceCalls/traceProperties and clear methods unsubscribe correctly", () => {
     const calls = [];
     const props = [];
@@ -203,7 +382,7 @@ describe("Tracer", () => {
     expect(props.length).toBe(1);
   });
 
-  test("exportSliceScenarios/importSliceScenarios roundtrip", () => {
+  test("exportSliceScenarios/importSliceScenarios roundtrip with trusted parser", () => {
     const sourceSlice = nextName("exported");
     const targetSlice = nextName("imported");
     const fn = Tracer.createProxyFn(() => "ok", "act");
@@ -222,7 +401,11 @@ describe("Tracer", () => {
     sourceConfig.name = targetSlice;
     payload.slices = [sourceConfig];
 
-    Tracer.importSliceScenarios(payload, { overwrite: true, activate: true });
+    Tracer.importSliceScenarios(payload, {
+      overwrite: true,
+      activate: true,
+      functionParser: (source) => new Function(`return (${source});`)(),
+    });
     Tracer.traceBySlice(targetSlice, (event) => hits.push(event));
     fn();
 
@@ -235,6 +418,39 @@ describe("Tracer", () => {
     expect(() => Tracer.importSliceScenarios(null)).toThrow();
     expect(() => Tracer.importSliceScenarios({})).toThrow();
     expect(() => Tracer.importSliceScenarios({ slices: {} })).toThrow();
+  });
+
+  test("importSliceScenarios safe mode does not execute serialized functions", () => {
+    const payload = {
+      slices: [
+        {
+          name: nextName("safe_slice"),
+          predicate: "(args) => args.fnKey === 'act'",
+          beforeCall: "() => true",
+          afterCall: "() => false",
+        },
+      ],
+    };
+
+    Tracer.importSliceScenarios(payload, { overwrite: true, activate: true });
+
+    expect(Tracer.getRegisteredSlices()).toContain(payload.slices[0].name);
+    expect(Tracer.tracerState.get(payload.slices[0].name)).toBe(false);
+  });
+
+  test("function call emits error status for thrown errors", () => {
+    const events = [];
+    const fn = Tracer.createProxyFn(() => {
+      throw new Error("boom");
+    }, "crash");
+    Tracer.traceCalls((event) => events.push(event));
+
+    expect(() => fn()).toThrow("boom");
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ place: "before", status: "started" });
+    expect(events[1]).toMatchObject({ place: "after", status: "error" });
+    expect(events[1].error).toBeInstanceOf(Error);
   });
 
   test("ReportSliceDiff: creates slice from start/end predicates and tracks calls inside", () => {
