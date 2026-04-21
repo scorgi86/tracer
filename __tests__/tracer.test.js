@@ -303,5 +303,52 @@ describe("Tracer", () => {
     expect(text).toContain("shouldTrack:");
     expect(text).toContain("diffBuilder:");
   });
+
+  test("stack async context: context is not preserved after timer boundary", async () => {
+    Tracer.configure({ asyncContext: "stack" });
+
+    let beforeAwait;
+    let afterAwait;
+    const fn = Tracer.createProxyFn(async () => {
+      beforeAwait = Tracer.getCurrentContext()?.val?.fnKey;
+      await new Promise((resolve) => {
+        setTimeout(() => {
+          afterAwait = Tracer.getCurrentContext()?.val?.fnKey;
+          resolve();
+        }, 0);
+      });
+      return "ok";
+    }, "stackAsync");
+
+    await fn();
+
+    expect(beforeAwait).toBe("stackAsync");
+    expect(afterAwait).toBeUndefined();
+  });
+
+  test("zone async context: context is preserved after timer boundary", async () => {
+    require("zone.js/node");
+    Tracer.configure({ asyncContext: "zone" });
+
+    let beforeAwait;
+    let afterAwait;
+    const fn = Tracer.createProxyFn(async () => {
+      beforeAwait = Tracer.getCurrentContext()?.val?.fnKey;
+      await new Promise((resolve) => {
+        setTimeout(() => {
+          afterAwait = Tracer.getCurrentContext()?.val?.fnKey;
+          resolve();
+        }, 0);
+      });
+      return "ok";
+    }, "zoneAsync");
+
+    await fn();
+
+    expect(beforeAwait).toBe("zoneAsync");
+    expect(afterAwait).toBe("zoneAsync");
+
+    Tracer.configure({ asyncContext: "stack" });
+  });
 });
 

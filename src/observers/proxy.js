@@ -118,17 +118,19 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
 
     const proxyFn = function(...args) {
 
-        const data = {
+        return ExecutionContext.withContext({
             eventType: 'functionCall',
             place: 'before', fnKey, className, fullName: `${className}.${fnKey}`, targetFn,
             thisArg: this, args, tracerState: tracerState, callStack: ExecutionContext.getCurrentContext()
-        };
+        }, () => {
+            const data = {
+                eventType: 'functionCall',
+                place: 'before', fnKey, className, fullName: `${className}.${fnKey}`, targetFn,
+                thisArg: this, args, tracerState: tracerState, callStack: ExecutionContext.getCurrentContext()
+            };
 
-        ExecutionContext.pushContext(data);
-
-        emitter.notify('beforeCallMethod', data);
-        
-        try {
+            emitter.notify('beforeCallMethod', data);
+            
             const result = targetFn.apply(this, args);
 
             emitter.notify('afterCallMethod', {
@@ -138,9 +140,7 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
             });
 
             return result;
-        } finally {
-            ExecutionContext.popContext();
-        }
+        });
     }
     proxyFn[isProxySymbol] = true
     proxyFn.original = targetFn;

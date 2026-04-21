@@ -60,6 +60,17 @@ export class Tracer {
   static tracerState = tracerState;
 
   /**
+   * Конфигурация провайдера контекста выполнения.
+   * @param {object} options
+   * @param {'stack'|'zone'} [options.asyncContext='stack']
+   * @returns {typeof Tracer}
+   */
+  static configure(options = {}) {
+    ExecutionContext.configure(options);
+    return Tracer;
+  }
+
+  /**
    * Создает обертку над функцией и отслеживает ее вызовы
    * @param {Function} targetFn - Функция для обертки
    * @param {string} eventName - Имя события, которое генерируется при вызове функции
