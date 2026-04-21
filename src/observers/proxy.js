@@ -18,6 +18,70 @@ const isProxy = (obj) => {
     return obj.__isProxy === true;
 }
 
+const isHostObject = (obj) => {
+    if (!obj || typeof obj !== 'object') {
+        return false;
+    }
+
+    if (typeof EventTarget !== 'undefined' && obj instanceof EventTarget) {
+        return true;
+    }
+
+    if (typeof Node !== 'undefined' && obj instanceof Node) {
+        return true;
+    }
+
+    if (typeof Window !== 'undefined' && obj instanceof Window) {
+        return true;
+    }
+
+    if (typeof Document !== 'undefined' && obj instanceof Document) {
+        return true;
+    }
+
+    if (typeof CSSStyleDeclaration !== 'undefined' && obj instanceof CSSStyleDeclaration) {
+        return true;
+    }
+
+    const tag = Object.prototype.toString.call(obj);
+    return (
+        tag === '[object CSSStyleDeclaration]' ||
+        tag === '[object Window]' ||
+        tag === '[object Document]' ||
+        tag === '[object Location]' ||
+        tag === '[object Navigator]'
+    );
+}
+
+const isNativeFunction = (fn) => {
+    if (typeof fn !== 'function') {
+        return false;
+    }
+    const source = Function.prototype.toString.call(fn);
+    return source.indexOf('[native code]') > -1;
+}
+
+const normalizeDepth = (value, fallback = 1) => {
+    if (value === Infinity) {
+        return Infinity;
+    }
+
+    const depth = Number(value);
+    if (!Number.isFinite(depth)) {
+        return fallback;
+    }
+
+    return Math.max(0, Math.floor(depth));
+}
+
+const isPlainObject = (value) => {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+}
+
 /**
  * Глобальное состояние трассировщика для хранения данных слайсов
  * @typedef {Object} TracerState
@@ -49,6 +113,9 @@ export const tracerState = {
         return tracerState._store.get(prop);
     }
 };
+
+let callSeq = 0;
+const nextCallId = () => ++callSeq;
 
 /**
  * Оборачивает конструктор класса для трассировки вызовов методов
@@ -115,33 +182,72 @@ export const wrapConstructor = (OriginalConstructor, className) => {
  * tracedAdd(2, 3); // Генерирует события beforeCallMethod/afterCallMethod
  */
 export const createProxyFn = ({fnKey, targetFn, className}) => {
-
     const proxyFn = function(...args) {
+        const parentContext = ExecutionContext.getCurrentContext();
+        const startedAt = Date.now();
+
+        const data = {
+            eventType: 'functionCall',
+            fnKey,
+            className,
+            fullName: `${className}.${fnKey}`,
+            targetFn,
+            thisArg: this,
+            args,
+            tracerState: tracerState,
+            callStack: parentContext,
+            callId: nextCallId(),
+            parentCallId: parentContext?.val?.callId,
+            startedAt,
+        };
 
         return ExecutionContext.withContext({
-            eventType: 'functionCall',
-            place: 'before', fnKey, className, fullName: `${className}.${fnKey}`, targetFn,
-            thisArg: this, args, tracerState: tracerState, callStack: ExecutionContext.getCurrentContext()
+            ...data,
+            place: 'before',
+            status: 'started',
         }, () => {
-            const data = {
-                eventType: 'functionCall',
-                place: 'before', fnKey, className, fullName: `${className}.${fnKey}`, targetFn,
-                thisArg: this, args, tracerState: tracerState, callStack: ExecutionContext.getCurrentContext()
-            };
-
-            emitter.notify('beforeCallMethod', data);
-            
-            const result = targetFn.apply(this, args);
-
-            emitter.notify('afterCallMethod', {
+            emitter.notify('beforeCallMethod', {
                 ...data,
-                value: result,
-                place: 'after'
+                place: 'before',
+                status: 'started',
             });
 
-            return result;
+            const emitAfter = (status, payload = {}) => {
+                const endedAt = Date.now();
+                emitter.notify('afterCallMethod', {
+                    ...data,
+                    place: 'after',
+                    status,
+                    endedAt,
+                    durationMs: endedAt - startedAt,
+                    ...payload,
+                });
+            };
+
+            try {
+                const result = targetFn.apply(this, args);
+
+                if (result && typeof result.then === "function") {
+                    return result.then(
+                        (value) => {
+                            emitAfter('ok', { value });
+                            return value;
+                        },
+                        (error) => {
+                            emitAfter('rejected', { error });
+                            throw error;
+                        },
+                    );
+                }
+
+                emitAfter('ok', { value: result });
+                return result;
+            } catch (error) {
+                emitAfter('error', { error });
+                throw error;
+            }
         });
-    }
+    };
     proxyFn[isProxySymbol] = true
     proxyFn.original = targetFn;
 
@@ -169,9 +275,16 @@ createProxyFn.isProxyFn = (fn) => fn[isProxySymbol] === true;
  * console.log(wrappedUser.name); // Генерирует событие propertyGet
  * wrappedUser.age = 31; // Генерирует событие propertySet
  */
-export const wrapProperty = (target, parentPropName, className) => {
-
-    if (isProxy(target)) {
+export const wrapProperty = (target, parentPropName, className, options = {}) => {
+    const opts = typeof options === 'number'
+        ? { maxDepth: options }
+        : (options || {});
+    const maxDepth = normalizeDepth(opts.maxDepth, 1);
+    const depth = normalizeDepth(opts.depth, 1);
+    const shouldWrap = typeof opts.shouldWrap === 'function'
+        ? opts.shouldWrap
+        : () => false;
+    if (depth > maxDepth || isProxy(target) || isHostObject(target) || !isPlainObject(target)) {
         return target;
     }
 
@@ -187,6 +300,9 @@ export const wrapProperty = (target, parentPropName, className) => {
             if (subProp === '__isProxy') {
                 return true;
             }
+            if (typeof subProp !== 'string') {
+                return Reflect.get(thisTarget, subProp);
+            }
 
             const value = Reflect.get(thisTarget, subProp);
 
@@ -200,8 +316,21 @@ export const wrapProperty = (target, parentPropName, className) => {
                 callStack: ExecutionContext.getCurrentContext()
             });
 
-            if (typeof value === 'object' && value !== null) {
-                const wrappedValue = wrapProperty(value, propPath, className);
+            if (depth < maxDepth && typeof value === 'object' && value !== null && !isHostObject(value) && isPlainObject(value) && shouldWrap({
+                phase: 'get',
+                depth,
+                maxDepth,
+                propName: propPath,
+                parentPropName,
+                className,
+                value,
+                thisTarget,
+            })) {
+                const wrappedValue = wrapProperty(value, propPath, className, {
+                    maxDepth,
+                    depth: depth + 1,
+                    shouldWrap,
+                });
                 Reflect.set(thisTarget, subProp, wrappedValue);
                 return wrappedValue;
             }
@@ -217,6 +346,9 @@ export const wrapProperty = (target, parentPropName, className) => {
          * @returns {boolean} Результат операции записи
          */
         set(thisTarget, subProp, newValue) {
+            if (typeof subProp !== 'string') {
+                return Reflect.set(thisTarget, subProp, newValue);
+            }
 
             const propPath = `${parentPropName}.${subProp}`;
             emitter.notify('propertySet', {
@@ -226,6 +358,23 @@ export const wrapProperty = (target, parentPropName, className) => {
                 fullName: `${className}.${propPath}`,
                 callStack: ExecutionContext.getCurrentContext()
             });
+
+            if (depth < maxDepth && typeof newValue === 'object' && newValue !== null && !isHostObject(newValue) && isPlainObject(newValue) && shouldWrap({
+                phase: 'set',
+                depth,
+                maxDepth,
+                propName: propPath,
+                parentPropName,
+                className,
+                value: newValue,
+                thisTarget,
+            })) {
+                return Reflect.set(thisTarget, subProp, wrapProperty(newValue, propPath, className, {
+                    maxDepth,
+                    depth: depth + 1,
+                    shouldWrap,
+                }));
+            }
 
             return Reflect.set(thisTarget, subProp, newValue);
         }
@@ -283,13 +432,13 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
         get() {
             emitter.notify('propertyGet', {
                 eventType: 'propertyGet',
-                place: 'before', value: internalValue, thisArg: target,
+                place: 'before', value: internalValue, thisArg: this,
                 propName, className, tracerState,
                 callStack: ExecutionContext.getCurrentContext()
             });
             // }
 
-            return originalGetter ? originalGetter.call(target) : internalValue;
+            return originalGetter ? originalGetter.call(this) : internalValue;
         },
     };
 
@@ -298,18 +447,21 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
          * Обернутый сеттер свойства
          * @param {*} newValue - Новое значение свойства
          */
-        patchedDescriptor.set = (newValue) => {
-            const calcValue = originalSetter ? originalSetter.call(target, newValue) : newValue;
+        patchedDescriptor.set = function(newValue) {
+            if (originalSetter) {
+                originalSetter.call(this, newValue);
+            }
+            const calcValue = originalGetter ? originalGetter.call(this) : newValue;
             const args = {
                 eventType: 'propertySet',
-                place: 'before', currValue: internalValue, value: calcValue, thisArg: target,
+                place: 'before', currValue: internalValue, value: calcValue, thisArg: this,
                 propName, className, tracerState,
                 callStack: ExecutionContext.getCurrentContext()
             };
 
             emitter.notify('propertySet', args);
 
-            if (typeof args.value === 'object' && args.value !== null) {
+            if (typeof args.value === 'object' && args.value !== null && !isHostObject(args.value)) {
                 internalValue = wrapProperty(args.value, propName, className);
             } else {
                 internalValue = args.value;
@@ -365,6 +517,9 @@ export function traverse(obj, className = '') {
     if (!obj || typeof obj !== 'object') {
         return;
     }
+    if (isHostObject(obj)) {
+        return;
+    }
 
     for (const fnKey of Object.getOwnPropertyNames(obj)) {
 
@@ -378,6 +533,9 @@ export function traverse(obj, className = '') {
             
             if (isFucntion) {
                 const targetFn = descriptor.value;
+                if (isNativeFunction(targetFn)) {
+                    continue;
+                }
 
                 if (!createProxyFn.isProxyFn(targetFn))  {
                     const proxyFn = createProxyFn({fnKey, targetFn, className});
