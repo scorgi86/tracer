@@ -39,6 +39,7 @@
     "globals": "^17.1.0",
     "jest": "^30.3.0",
     "vite": "^8.0.1",
-    "vite-plugin-dts": "^4.5.4"
+    "vite-plugin-dts": "^4.5.4",
+    "zone.js": "^0.15.1"
   }
 }
