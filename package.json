@@ -24,7 +24,11 @@
     "prepublishOnly": "npm run build",
     "pretest": "npm run build",
     "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "perf:guard": "node scripts/perf-guard.js",
+    "perf:baseline": "node scripts/perf-guard.js --write-baseline",
+    "profile:check": "node scripts/runtime-profile-check.js",
+    "errors:scan": "node scripts/error-fingerprint-check.js"
   },
   "keywords": [],
   "author": "",

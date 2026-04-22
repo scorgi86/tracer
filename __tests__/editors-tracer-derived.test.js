@@ -114,8 +114,13 @@ const runSlideObserveFromEditorsTracer = (TracerApi, win) => {
 };
 
 describe("editors-tracer derived scenarios", () => {
+  beforeEach(() => {
+    Tracer.setTraceProfile("full");
+  });
+
   afterEach(() => {
     clearSubscriptions();
+    Tracer.setTraceProfile("balanced");
   });
 
   test("common slices: AppTimerTick + AutoSaveTick activate on expected calls", () => {

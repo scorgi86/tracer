@@ -8,6 +8,67 @@ import {
  
 import { ExecutionContext } from './context.js';
 
+export const traceOptionsSymbol = Symbol('trace-options');
+
+const defaultNoisyCalls = [
+    'CEditorPage.onTimerScroll',
+    'PaintMessageLoop._animation',
+    'baseEditorsApi._autoSave',
+];
+
+const toArray = (value, fallback = []) => {
+    if (Array.isArray(value)) {
+        return value.filter((item) => typeof item === 'string' && item.length > 0);
+    }
+    return [...fallback];
+}
+
+export const buildTraceOptions = (options = {}) => {
+    return {
+        profile: typeof options.profile === 'string' ? options.profile : 'balanced',
+        enableCalls: options.enableCalls !== false,
+        enableProperties: options.enableProperties === true,
+        suppressNoisy: options.suppressNoisy !== false,
+        noisyCalls: toArray(options.noisyCalls, defaultNoisyCalls),
+        noisyProperties: toArray(options.noisyProperties, []),
+        callFilter: typeof options.callFilter === 'function' ? options.callFilter : null,
+        propertyFilter: typeof options.propertyFilter === 'function' ? options.propertyFilter : null,
+        captureContext: options.captureContext === true,
+    };
+}
+
+export const getTraceOptions = () => {
+    const value = tracerState.get(traceOptionsSymbol);
+    if (value) {
+        return value;
+    }
+    const defaults = buildTraceOptions();
+    tracerState.set(traceOptionsSymbol, defaults);
+    return defaults;
+}
+
+export const setTraceOptions = (options = {}) => {
+    const current = getTraceOptions();
+    const next = buildTraceOptions({
+        ...current,
+        ...options,
+    });
+    tracerState.set(traceOptionsSymbol, next);
+    return next;
+}
+
+const includesByPatterns = (value, patterns = []) => {
+    if (!value || !patterns?.length) {
+        return false;
+    }
+    for (let i = 0; i < patterns.length; i += 1) {
+        if (value.indexOf(patterns[i]) > -1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Проверяет, является ли объект прокси
  * @param {object} obj - Проверяемый объект
@@ -183,36 +244,109 @@ export const wrapConstructor = (OriginalConstructor, className) => {
  */
 export const createProxyFn = ({fnKey, targetFn, className}) => {
     const proxyFn = function(...args) {
-        const parentContext = ExecutionContext.getCurrentContext();
-        const startedAt = Date.now();
+        const traceOptions = getTraceOptions();
+        if (traceOptions.enableCalls === false) {
+            return targetFn.apply(this, args);
+        }
 
+        const fullName = `${className}.${fnKey}`;
+        if (traceOptions.suppressNoisy && includesByPatterns(fullName, traceOptions.noisyCalls)) {
+            return targetFn.apply(this, args);
+        }
+        if (traceOptions.callFilter && !traceOptions.callFilter({
+            fnKey,
+            className,
+            fullName,
+        })) {
+            return targetFn.apply(this, args);
+        }
+
+        const hasBeforeSubscribers = emitter.has('beforeCallMethod');
+        const hasAfterSubscribers = emitter.has('afterCallMethod');
+        if (!hasBeforeSubscribers && !hasAfterSubscribers) {
+            return targetFn.apply(this, args);
+        }
+        const startedAt = Date.now();
         const data = {
             eventType: 'functionCall',
             fnKey,
             className,
-            fullName: `${className}.${fnKey}`,
+            fullName,
             targetFn,
             thisArg: this,
             args,
             tracerState: tracerState,
-            callStack: parentContext,
-            callId: nextCallId(),
-            parentCallId: parentContext?.val?.callId,
             startedAt,
         };
+
+        if (traceOptions.captureContext !== true) {
+            if (hasBeforeSubscribers) {
+                emitter.notify('beforeCallMethod', {
+                    ...data,
+                    place: 'before',
+                    status: 'started',
+                });
+            }
+
+            const emitAfter = (status, payload = {}) => {
+                if (!hasAfterSubscribers) {
+                    return;
+                }
+                const endedAt = Date.now();
+                emitter.notify('afterCallMethod', {
+                    ...data,
+                    place: 'after',
+                    status,
+                    endedAt,
+                    durationMs: endedAt - startedAt,
+                    ...payload,
+                });
+            };
+
+            try {
+                const result = targetFn.apply(this, args);
+                if (result && typeof result.then === "function") {
+                    return result.then(
+                        (value) => {
+                            emitAfter('ok', { value });
+                            return value;
+                        },
+                        (error) => {
+                            emitAfter('rejected', { error });
+                            throw error;
+                        },
+                    );
+                }
+                emitAfter('ok', { value: result });
+                return result;
+            } catch (error) {
+                emitAfter('error', { error });
+                throw error;
+            }
+        }
+
+        const parentContext = ExecutionContext.getCurrentContext();
+        data.callStack = parentContext;
+        data.callId = nextCallId();
+        data.parentCallId = parentContext?.val?.callId;
 
         return ExecutionContext.withContext({
             ...data,
             place: 'before',
             status: 'started',
         }, () => {
-            emitter.notify('beforeCallMethod', {
-                ...data,
-                place: 'before',
-                status: 'started',
-            });
+            if (hasBeforeSubscribers) {
+                emitter.notify('beforeCallMethod', {
+                    ...data,
+                    place: 'before',
+                    status: 'started',
+                });
+            }
 
             const emitAfter = (status, payload = {}) => {
+                if (!hasAfterSubscribers) {
+                    return;
+                }
                 const endedAt = Date.now();
                 emitter.notify('afterCallMethod', {
                     ...data,
@@ -305,16 +439,33 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
             }
 
             const value = Reflect.get(thisTarget, subProp);
+            const traceOptions = getTraceOptions();
+            if (traceOptions.enableProperties !== true) {
+                return value;
+            }
 
             const propPath = `${parentPropName}.${subProp}`;
+            const fullName = `${className}.${propPath}`;
+            const passPropertyFilter = !traceOptions.propertyFilter || traceOptions.propertyFilter({
+                phase: 'get',
+                propName: propPath,
+                className,
+                fullName,
+            }) === true;
+            const shouldNotifyGet = traceOptions.enableProperties
+                && emitter.has('propertyGet')
+                && passPropertyFilter
+                && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
 
-            emitter.notify('propertyGet', {
-                eventType: 'propertyGet',
-                place: 'before', value, thisArg: target,
-                propName: propPath, className, tracerState,
-                fullName: `${className}.${propPath}`,
-                callStack: ExecutionContext.getCurrentContext()
-            });
+            if (shouldNotifyGet) {
+                emitter.notify('propertyGet', {
+                    eventType: 'propertyGet',
+                    place: 'before', value, thisArg: target,
+                    propName: propPath, className, tracerState,
+                    fullName,
+                    callStack: ExecutionContext.getCurrentContext()
+                });
+            }
 
             if (depth < maxDepth && typeof value === 'object' && value !== null && !isHostObject(value) && isPlainObject(value) && shouldWrap({
                 phase: 'get',
@@ -349,15 +500,33 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
             if (typeof subProp !== 'string') {
                 return Reflect.set(thisTarget, subProp, newValue);
             }
+            const traceOptions = getTraceOptions();
+            if (traceOptions.enableProperties !== true) {
+                return Reflect.set(thisTarget, subProp, newValue);
+            }
 
             const propPath = `${parentPropName}.${subProp}`;
-            emitter.notify('propertySet', {
-                eventType: 'propertySet',
-                place: 'before', curValue: thisTarget[subProp], value: newValue, thisArg: target,
-                propName: propPath, className, tracerState,
-                fullName: `${className}.${propPath}`,
-                callStack: ExecutionContext.getCurrentContext()
-            });
+            const fullName = `${className}.${propPath}`;
+            const passPropertyFilter = !traceOptions.propertyFilter || traceOptions.propertyFilter({
+                phase: 'set',
+                propName: propPath,
+                className,
+                fullName,
+            }) === true;
+            const shouldNotifySet = traceOptions.enableProperties
+                && emitter.has('propertySet')
+                && passPropertyFilter
+                && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
+
+            if (shouldNotifySet) {
+                emitter.notify('propertySet', {
+                    eventType: 'propertySet',
+                    place: 'before', curValue: thisTarget[subProp], value: newValue, thisArg: target,
+                    propName: propPath, className, tracerState,
+                    fullName,
+                    callStack: ExecutionContext.getCurrentContext()
+                });
+            }
 
             if (depth < maxDepth && typeof newValue === 'object' && newValue !== null && !isHostObject(newValue) && isPlainObject(newValue) && shouldWrap({
                 phase: 'set',
@@ -430,12 +599,30 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
          * @returns {*} Значение свойства
          */
         get() {
-            emitter.notify('propertyGet', {
-                eventType: 'propertyGet',
-                place: 'before', value: internalValue, thisArg: this,
-                propName, className, tracerState,
-                callStack: ExecutionContext.getCurrentContext()
-            });
+            const traceOptions = getTraceOptions();
+            if (traceOptions.enableProperties !== true) {
+                return originalGetter ? originalGetter.call(this) : internalValue;
+            }
+            const fullName = `${className}.${propName}`;
+            const passPropertyFilter = !traceOptions.propertyFilter || traceOptions.propertyFilter({
+                phase: 'get',
+                propName,
+                className,
+                fullName,
+            }) === true;
+            const shouldNotifyGet = traceOptions.enableProperties
+                && emitter.has('propertyGet')
+                && passPropertyFilter
+                && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
+            if (shouldNotifyGet) {
+                emitter.notify('propertyGet', {
+                    eventType: 'propertyGet',
+                    place: 'before', value: internalValue, thisArg: this,
+                    propName, className, tracerState,
+                    fullName,
+                    callStack: ExecutionContext.getCurrentContext()
+                });
+            }
             // }
 
             return originalGetter ? originalGetter.call(this) : internalValue;
@@ -456,10 +643,32 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
                 eventType: 'propertySet',
                 place: 'before', currValue: internalValue, value: calcValue, thisArg: this,
                 propName, className, tracerState,
+                fullName: `${className}.${propName}`,
                 callStack: ExecutionContext.getCurrentContext()
             };
 
-            emitter.notify('propertySet', args);
+            const traceOptions = getTraceOptions();
+            if (traceOptions.enableProperties !== true) {
+                if (typeof args.value === 'object' && args.value !== null && !isHostObject(args.value)) {
+                    internalValue = wrapProperty(args.value, propName, className);
+                } else {
+                    internalValue = args.value;
+                }
+                return;
+            }
+            const passPropertyFilter = !traceOptions.propertyFilter || traceOptions.propertyFilter({
+                phase: 'set',
+                propName,
+                className,
+                fullName: args.fullName,
+            }) === true;
+            const shouldNotifySet = traceOptions.enableProperties
+                && emitter.has('propertySet')
+                && passPropertyFilter
+                && (!traceOptions.suppressNoisy || !includesByPatterns(args.fullName, traceOptions.noisyProperties));
+            if (shouldNotifySet) {
+                emitter.notify('propertySet', args);
+            }
 
             if (typeof args.value === 'object' && args.value !== null && !isHostObject(args.value)) {
                 internalValue = wrapProperty(args.value, propName, className);
