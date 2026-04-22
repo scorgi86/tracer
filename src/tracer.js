@@ -2,7 +2,11 @@
 import { ExecutionContext } from "./observers/context.js";
 import {
   createProxyFn,
+  getTraceOptions,
+  setTraceOptions,
+  buildTraceOptions,
   tracerState,
+  traceOptionsSymbol,
   traverse,
   wrapConstructor,
   wrapProperty,
@@ -18,8 +22,46 @@ const stateConfigKey = Symbol("stateConfigKey");
 const traceCallback = subscriptionService.createStore();
 const traceCallCallback = subscriptionService.createStore();
 const tracePropertyCallback = subscriptionService.createStore();
+const traceBatchCallback = subscriptionService.createStore();
+const traceCallBatchCallback = subscriptionService.createStore();
+const tracePropertyBatchCallback = subscriptionService.createStore();
 const sliceExecutionDepth = new Map();
 const shallowObservedProps = Symbol("shallowObservedProps");
+const TRACE_PROFILES = Object.freeze({
+  minimal: Object.freeze({
+    profile: "minimal",
+    enableCalls: true,
+    enableProperties: false,
+    suppressNoisy: true,
+    captureContext: false,
+  }),
+  balanced: Object.freeze({
+    profile: "balanced",
+    enableCalls: true,
+    enableProperties: false,
+    suppressNoisy: true,
+    captureContext: false,
+  }),
+  full: Object.freeze({
+    profile: "full",
+    enableCalls: true,
+    enableProperties: true,
+    suppressNoisy: false,
+    captureContext: true,
+  }),
+});
+
+const includesByPatterns = (value, patterns = []) => {
+  if (!value || !patterns?.length) {
+    return false;
+  }
+  for (let i = 0; i < patterns.length; i += 1) {
+    if (value.indexOf(patterns[i]) > -1) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const isPlainObject = (value) => {
   if (!value || typeof value !== "object") {
@@ -87,17 +129,24 @@ const observePropertyObjectShallow = (target, parentPropName, className) => {
       ...descriptor,
       get() {
         const value = originalGetter ? originalGetter.call(this) : internalValue;
-        emitter.notify("propertyGet", {
-          eventType: "propertyGet",
-          place: "before",
-          value,
-          thisArg: this,
-          propName: propPath,
-          className,
-          tracerState,
-          fullName: `${className}.${propPath}`,
-          callStack: ExecutionContext.getCurrentContext(),
-        });
+        const traceOptions = getTraceOptions();
+        const fullName = `${className}.${propPath}`;
+        const shouldNotifyGet = traceOptions.enableProperties
+          && emitter.has("propertyGet")
+          && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
+        if (shouldNotifyGet) {
+          emitter.notify("propertyGet", {
+            eventType: "propertyGet",
+            place: "before",
+            value,
+            thisArg: this,
+            propName: propPath,
+            className,
+            tracerState,
+            fullName,
+            callStack: ExecutionContext.getCurrentContext(),
+          });
+        }
         return value;
       },
       set(newValue) {
@@ -107,18 +156,25 @@ const observePropertyObjectShallow = (target, parentPropName, className) => {
         } else {
           internalValue = newValue;
         }
-        emitter.notify("propertySet", {
-          eventType: "propertySet",
-          place: "before",
-          curValue: prevValue,
-          value: newValue,
-          thisArg: this,
-          propName: propPath,
-          className,
-          tracerState,
-          fullName: `${className}.${propPath}`,
-          callStack: ExecutionContext.getCurrentContext(),
-        });
+        const traceOptions = getTraceOptions();
+        const fullName = `${className}.${propPath}`;
+        const shouldNotifySet = traceOptions.enableProperties
+          && emitter.has("propertySet")
+          && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
+        if (shouldNotifySet) {
+          emitter.notify("propertySet", {
+            eventType: "propertySet",
+            place: "before",
+            curValue: prevValue,
+            value: newValue,
+            thisArg: this,
+            propName: propPath,
+            className,
+            tracerState,
+            fullName,
+            callStack: ExecutionContext.getCurrentContext(),
+          });
+        }
       },
     };
 
@@ -181,7 +237,43 @@ export class Tracer {
    */
   static configure(options = {}) {
     ExecutionContext.configure(options);
+    if (options.traceProfile) {
+      Tracer.setTraceProfile(options.traceProfile, options.traceOptions || {});
+    } else if (options.traceOptions) {
+      Tracer.configureTracing(options.traceOptions);
+    }
     return Tracer;
+  }
+
+  static setTraceProfile(profileName = "balanced", overrides = {}) {
+    const preset = TRACE_PROFILES[profileName];
+    if (!preset) {
+      throw new Error(`Неизвестный профиль трассировки: ${profileName}`);
+    }
+    setTraceOptions({
+      ...preset,
+      ...overrides,
+      profile: profileName,
+    });
+    return Tracer;
+  }
+
+  static configureTracing(options = {}) {
+    const current = getTraceOptions();
+    setTraceOptions({
+      ...current,
+      ...options,
+    });
+    return Tracer;
+  }
+
+  static getTraceConfig() {
+    const options = getTraceOptions();
+    return {
+      ...options,
+      noisyCalls: [...options.noisyCalls],
+      noisyProperties: [...options.noisyProperties],
+    };
   }
 
   /**
@@ -606,6 +698,25 @@ export class Tracer {
   }
 
   /**
+   * Батч-подписка на все события трассировки.
+   * @param {Function} callback - Получает массив событий
+   * @param {object} [options]
+   * @param {number} [options.maxBatchSize=100]
+   * @param {number} [options.flushIntervalMs=16]
+   * @param {number} [options.bufferSize=2000]
+   * @returns {typeof Tracer}
+   */
+  static traceAllBatched(callback, options = {}) {
+    subscriptionService.traceAllBatched({
+      emitter,
+      store: traceBatchCallback,
+      callback,
+      options,
+    });
+    return Tracer;
+  }
+
+  /**
    * Подписка только на события вызовов функций.
    * @param {Function} callback
    * @returns {typeof Tracer}
@@ -615,6 +726,22 @@ export class Tracer {
       emitter,
       store: traceCallCallback,
       callback,
+    });
+    return Tracer;
+  }
+
+  /**
+   * Батч-подписка на события вызовов функций.
+   * @param {Function} callback - Получает массив событий
+   * @param {object} [options]
+   * @returns {typeof Tracer}
+   */
+  static traceCallsBatched(callback, options = {}) {
+    subscriptionService.traceCallsBatched({
+      emitter,
+      store: traceCallBatchCallback,
+      callback,
+      options,
     });
     return Tracer;
   }
@@ -634,6 +761,22 @@ export class Tracer {
   }
 
   /**
+   * Батч-подписка на события чтения/записи свойств.
+   * @param {Function} callback - Получает массив событий
+   * @param {object} [options]
+   * @returns {typeof Tracer}
+   */
+  static tracePropertiesBatched(callback, options = {}) {
+    subscriptionService.tracePropertiesBatched({
+      emitter,
+      store: tracePropertyBatchCallback,
+      callback,
+      options,
+    });
+    return Tracer;
+  }
+
+  /**
    * Очищает все подписки трассировки
    * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
    */
@@ -641,6 +784,10 @@ export class Tracer {
     subscriptionService.untraceAll({
       emitter,
       store: traceCallback,
+    });
+    subscriptionService.untraceAll({
+      emitter,
+      store: traceBatchCallback,
     });
     return Tracer;
   }
@@ -654,6 +801,10 @@ export class Tracer {
       emitter,
       store: traceCallCallback,
     });
+    subscriptionService.untraceCalls({
+      emitter,
+      store: traceCallBatchCallback,
+    });
     return Tracer;
   }
 
@@ -665,6 +816,10 @@ export class Tracer {
     subscriptionService.untraceProperties({
       emitter,
       store: tracePropertyCallback,
+    });
+    subscriptionService.untraceProperties({
+      emitter,
+      store: tracePropertyBatchCallback,
     });
     return Tracer;
   }
@@ -844,6 +999,8 @@ export class Tracer {
    */
   static [stateConfigKey] = new Map();
 }
+
+tracerState.set(traceOptionsSymbol, buildTraceOptions(TRACE_PROFILES.balanced));
 
 // Добавить проверку окружения
 if (typeof window !== 'undefined') {

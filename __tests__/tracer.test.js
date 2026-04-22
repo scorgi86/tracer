@@ -9,9 +9,16 @@ const flushTraceSubscriptions = () => {
   Tracer.untraceProperties();
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("Tracer", () => {
+  beforeEach(() => {
+    Tracer.setTraceProfile("full");
+  });
+
   afterEach(() => {
     flushTraceSubscriptions();
+    Tracer.setTraceProfile("balanced");
   });
 
   test("createProxyFn + trace emits before/after function events", () => {
@@ -380,6 +387,102 @@ describe("Tracer", () => {
 
     expect(calls.length).toBe(2);
     expect(props.length).toBe(1);
+  });
+
+  test("minimal profile disables property events", () => {
+    Tracer.setTraceProfile("minimal");
+    const events = [];
+    const target = { value: 1 };
+
+    Tracer.observeProperty(target, "value", "Counter");
+    Tracer.traceProperties((event) => events.push(event));
+
+    target.value;
+    target.value = 2;
+
+    expect(events).toHaveLength(0);
+  });
+
+  test("balanced profile suppresses noisy timer call events", () => {
+    Tracer.setTraceProfile("balanced");
+    const events = [];
+    const target = {
+      onTimerScroll() {
+        return "ok";
+      },
+    };
+
+    Tracer.observe(target, "CEditorPage");
+    Tracer.traceCalls((event) => events.push(event));
+    const result = target.onTimerScroll();
+
+    expect(result).toBe("ok");
+    expect(events).toHaveLength(0);
+  });
+
+  test("full profile does not suppress noisy timer call events", () => {
+    Tracer.setTraceProfile("full");
+    const events = [];
+    const target = {
+      onTimerScroll() {
+        return "ok";
+      },
+    };
+
+    Tracer.observe(target, "CEditorPage");
+    Tracer.traceCalls((event) => events.push(event));
+    const result = target.onTimerScroll();
+
+    expect(result).toBe("ok");
+    expect(events).toHaveLength(2);
+    expect(events[0].fnKey).toBe("onTimerScroll");
+  });
+
+  test("configureTracing callFilter drops call events before emit", () => {
+    Tracer.setTraceProfile("full");
+    Tracer.configureTracing({
+      callFilter: ({ fnKey }) => fnKey !== "skipMe",
+    });
+
+    const events = [];
+    const target = {
+      keepMe() {
+        return 1;
+      },
+      skipMe() {
+        return 2;
+      },
+    };
+
+    Tracer.observe(target, "FilterTarget");
+    Tracer.traceCalls((event) => events.push(`${event.fnKey}:${event.place}`));
+
+    target.keepMe();
+    target.skipMe();
+
+    expect(events).toEqual(["keepMe:before", "keepMe:after"]);
+  });
+
+  test("traceCallsBatched returns events in batches", async () => {
+    Tracer.setTraceProfile("full");
+    const batches = [];
+    const fn = Tracer.createProxyFn((x) => x + 1, "batchedCall");
+
+    Tracer.traceCallsBatched((batch) => batches.push(batch), {
+      maxBatchSize: 3,
+      flushIntervalMs: 50,
+      bufferSize: 10,
+    });
+
+    fn(1);
+    fn(2);
+
+    await sleep(80);
+
+    expect(batches.length).toBeGreaterThan(0);
+    expect(Array.isArray(batches[0])).toBe(true);
+    expect(batches[0].length).toBeGreaterThan(0);
+    expect(batches[0][0].eventType).toBe("functionCall");
   });
 
   test("exportSliceScenarios/importSliceScenarios roundtrip with trusted parser", () => {
