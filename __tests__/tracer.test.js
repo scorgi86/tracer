@@ -61,6 +61,24 @@ describe("Tracer", () => {
     expect(events[1]).toMatchObject({ propName: "value", className: "Counter", value: 3 });
   });
 
+  test("traceProperties receives manually observed property events in balanced profile", () => {
+    Tracer.setTraceProfile("balanced");
+    const events = [];
+    const page = { m_nZoomValue: 100 };
+
+    Tracer.observeProperty(page, "m_nZoomValue", "CEditorPage");
+    Tracer.traceProperties((event) => events.push(event));
+
+    page.m_nZoomValue = 120;
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      className: "CEditorPage",
+      fullName: "CEditorPage.m_nZoomValue",
+      eventType: "propertySet",
+    });
+  });
+
   test("observePropertyObject tracks nested get/set paths", () => {
     const events = [];
     const nested = { city: "Ekb", zip: 620000 };
@@ -267,6 +285,58 @@ describe("Tracer", () => {
     expect(events.some((e) => e.fnKey === "ping")).toBe(true);
   });
 
+  test("observe does not auto-wrap properties by default", () => {
+    const events = [];
+    const target = {
+      value: 1,
+      ping() {
+        return "pong";
+      },
+    };
+
+    Tracer.observe(target, "PlainObj");
+    Tracer.traceAll((event) => events.push(event));
+
+    const current = target.value;
+    target.value = current + 1;
+    target.ping();
+
+    expect(events.some((e) => e.eventType === "propertyGet" || e.eventType === "propertySet")).toBe(false);
+    expect(events.filter((e) => e.eventType === "functionCall").length).toBe(2);
+  });
+
+  test("manually observed properties are included in global tracing", () => {
+    const events = [];
+    const target = { value: 1 };
+
+    Tracer.observe(target, "PlainObj");
+    Tracer.observeProperty(target, "value", "PlainObj");
+    Tracer.traceAll((event) => events.push(event));
+
+    target.value;
+    target.value = 2;
+
+    expect(events.map((e) => e.eventType)).toEqual(["propertyGet", "propertySet"]);
+    expect(events.every((e) => e.className === "PlainObj")).toBe(true);
+  });
+
+  test("observe() assigns fallback className for plain objects", () => {
+    const events = [];
+    const target = {
+      ping() {
+        return "pong";
+      },
+    };
+    Tracer.observe(target);
+    Tracer.traceCalls((event) => events.push(event));
+
+    target.ping();
+
+    expect(events).toHaveLength(2);
+    expect(events[0].className).toBe("Object");
+    expect(events[1].className).toBe("Object");
+  });
+
   test("observePrototypeAll accepts object map of classes", () => {
     class Service {
       ping() {
@@ -389,7 +459,7 @@ describe("Tracer", () => {
     expect(props.length).toBe(1);
   });
 
-  test("minimal profile disables property events", () => {
+  test("minimal profile keeps explicit property subscriptions working", () => {
     Tracer.setTraceProfile("minimal");
     const events = [];
     const target = { value: 1 };
@@ -400,7 +470,8 @@ describe("Tracer", () => {
     target.value;
     target.value = 2;
 
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(2);
+    expect(events.map((e) => e.eventType)).toEqual(["propertyGet", "propertySet"]);
   });
 
   test("balanced profile suppresses noisy timer call events", () => {
@@ -621,6 +692,80 @@ describe("Tracer", () => {
     expect(text).toContain("endPredicate:");
     expect(text).toContain("shouldTrack:");
     expect(text).toContain("diffBuilder:");
+  });
+
+  test("ReportSliceUsage: collects methods/properties only inside slice run", () => {
+    Tracer.setTraceProfile("full");
+    const model = { zoom: 100 };
+    const globalPropertyEvents = [];
+    Tracer.observeProperty(model, "zoom", "CEditorPage");
+    Tracer.traceProperties((event) => globalPropertyEvents.push(event.fullName));
+
+    const start = Tracer.createProxyFn(() => "start", "startRun");
+    const inside = Tracer.createProxyFn(() => {
+      model.zoom = model.zoom + 10;
+      return "inside";
+    }, "insideRun");
+    const end = Tracer.createProxyFn(() => "end", "endRun");
+
+    const report = new Tracer.reports.ReportSliceUsage({
+      tracer: Tracer,
+      sliceName: nextName("slice_usage"),
+      startPredicate: (event) => event.fnKey === "startRun",
+      endPredicate: (event) => event.fnKey === "endRun",
+    }).start();
+
+    model.zoom = 101; // global, outside slice
+    start();
+    inside();
+    end();
+    model.zoom = 102; // global, outside slice
+
+    const runs = report.getRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].methods).toContain("commonFn.insideRun");
+    expect(runs[0].propertiesGet).toContain("CEditorPage.zoom");
+    expect(runs[0].propertiesSet).toContain("CEditorPage.zoom");
+    expect(globalPropertyEvents.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("ReportSliceUsage: computes diff between slice runs", () => {
+    Tracer.setTraceProfile("full");
+    const model = { zoom: 100, width: 50 };
+    Tracer.observeProperty(model, "zoom", "CEditorPage");
+    Tracer.observeProperty(model, "width", "CEditorPage");
+
+    const start = Tracer.createProxyFn(() => "start", "startRunDiff");
+    const end = Tracer.createProxyFn(() => "end", "endRunDiff");
+    const insideA = Tracer.createProxyFn(() => {
+      model.zoom = model.zoom + 1;
+    }, "insideA");
+    const insideB = Tracer.createProxyFn(() => {
+      model.width = model.width + 1;
+    }, "insideB");
+
+    const report = new Tracer.reports.ReportSliceUsage({
+      tracer: Tracer,
+      sliceName: nextName("slice_usage_diff"),
+      startPredicate: (event) => event.fnKey === "startRunDiff",
+      endPredicate: (event) => event.fnKey === "endRunDiff",
+    }).start();
+
+    start();
+    insideA();
+    end();
+
+    start();
+    insideA();
+    insideB();
+    end();
+
+    const runs = report.getRuns();
+    expect(runs).toHaveLength(2);
+
+    const diff = report.getDiff(0, 1);
+    expect(diff.methods.added).toContain("commonFn.insideB");
+    expect(diff.propertiesSet.added).toContain("CEditorPage.width");
   });
 
   test("stack async context: context is not preserved after timer boundary", async () => {
