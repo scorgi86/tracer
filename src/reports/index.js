@@ -1,15 +1,3 @@
-class BaseReport {
-  
-  logProvider = null;
-  constructor({ logProvider }) {
-    this.logProvider = logProvider;
-  }
-
-  log() {
-
-  }
-}
-
 /**
  * Отчет создат
  */
@@ -156,11 +144,13 @@ class ReportSliceDiff {
       if (typeof structuredClone === "function") {
         return structuredClone(value);
       }
-    } catch (e) {}
+    } catch {
+      // fallback to JSON clone below
+    }
 
     try {
       return JSON.parse(JSON.stringify(value));
-    } catch (e) {
+    } catch {
       return value;
     }
   }

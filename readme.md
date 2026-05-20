@@ -115,6 +115,7 @@ Tracer.configureTracing({
 
 ```bash
 npm run build
+npm run lint
 npm test
 npm run test:coverage
 npm run perf:guard
@@ -122,6 +123,19 @@ npm run perf:baseline
 npm run profile:check
 npm run errors:scan -- path/to/runtime.log
 ```
+
+## Definition of Done (Release)
+
+Релиз считается готовым только если выполнены все пункты:
+
+- `npm run lint` проходит без ошибок
+- `npm run build` проходит и артефакты в `dist` актуальны
+- `npx jest --runInBand` проходит
+- `npm run test:docs-examples` проходит
+- `npm run profile:check` проходит
+- `npm run perf:guard` проходит
+- baseline производительности зафиксирован (`.perf-baseline.json`) и актуален
+- документация в `docs/` синхронизирована с текущим API
 
 ## Документация
 
