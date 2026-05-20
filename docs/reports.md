@@ -1,3 +1,8 @@
+﻿---
+title: "Reports"
+layout: default
+---
+
 # Reports
 
 ## Available reports
@@ -71,3 +76,4 @@ const usage = new Tracer.reports.ReportSliceUsage({
 - Manual property watchers stay global.
 - `ReportSliceUsage` still records only events inside the active slice window.
 - Run-to-run diffs are available via `getDiff(...)` and `getAdjacentDiffs()`.
+

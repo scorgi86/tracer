@@ -1,139 +1,355 @@
-﻿# Tracer - Полная документация
+﻿---
+title: "Tracer - Полная документация"
+layout: default
+---
 
-## Версия 2.0 | Руководство по трассировке JavaScript-кода
+# Tracer - Полная документация
+
+## Версия 4.2 | Руководство по трассировке JavaScript-кода
+
+---
+
+## Старт за 15 минут
+
+Этот блок для быстрого входа в Tracer в легаси-проекте без документации.
+
+### 0) Быстрый выбор сценария
+
+| Симптом | Действие |
+|---|---|
+| Метод вызывается слишком часто | Выполните шаги 1 → 2 и добавьте счетчик вызовов из раздела 11.1 |
+| Поле меняется “само” | Выполните шаги 1 → 2 и подключите `observeProperty` из раздела 11.4 |
+| Нужен только один бизнес-флоу | Выполните шаги 1 → 3 → 4 |
+| Потеря контекста в async | Выполните шаг 1 и включите `captureContext: true` (раздел 9.2) |
+| Нужна аварийная остановка | Используйте `Tracer.debugOn(...)` (раздел 8.1) |
+
+### 1) Включите безопасный профиль
+
+Статус: копипаст.
+
+```javascript
+Tracer.setTraceProfile('balanced');
+Tracer.configure({ asyncContext: 'stack' });
+```
+
+### 2) Оберните проблемный модуль
+
+Статус: адаптировать `targetService`, `TargetService`.
+
+```javascript
+Tracer.observe(targetService, 'TargetService');
+Tracer.traceCalls((event) => {
+  if (event.place === 'before') {
+    console.log(`→ ${event.fullName}`);
+  }
+});
+```
+
+### 3) Добавьте один слайс для сценария
+
+Статус: адаптировать `incidentFlow`, `TargetService.run`.
+
+```javascript
+Tracer.defineSlice('incidentFlow', {
+  predicate: (event) => event.fullName === 'TargetService.run',
+  beforeCall: () => true,
+  afterCall: () => false
+});
+
+Tracer.traceBySlice('incidentFlow', (event) => {
+  console.log(`[incidentFlow] ${event.fullName}`);
+});
+```
+
+### 4) Подавите шум
+
+Статус: адаптировать `noisyCalls` под ваш проект.
+
+```javascript
+Tracer.configureTracing({
+  suppressNoisy: true,
+  noisyCalls: ['CEditorPage.onTimerScroll', 'PaintMessageLoop._animation']
+});
+```
+
+### 5) Завершите сессию корректно
+
+Статус: копипаст.
+
+```javascript
+Tracer.untraceAll();
+Tracer.disableSliceListeners('incidentFlow');
+```
 
 ---
 
 ## Оглавление
 
-1. [Введение](#1-введение)
-2. [Быстрый старт](#2-быстрый-старт)
-3. [Архитектура и компоненты](#3-архитектура-и-компоненты)
-4. [API Reference](#4-api-reference)
-5. [Отчеты и аналитика](#5-отчеты-и-аналитика)
-6. [Гайд по отладке](#6-гайд-по-отладке)
-7. [Мониторинг объектов внутри метода](#7-мониторинг-объектов-внутри-метода)
-8. [Практические примеры](#8-практические-примеры)
-9. [Решение проблем](#9-решение-проблем)
-10. [Чеклист разработчика](#10-чеклист-разработчика)
-
-## Быстрая навигация по страницам
-
-- [Быстрый старт](./getting-started.md)
-- [Слайсы](./slices.md)
-- [Асинхронность](./async.md)
-- [Отчеты](./reports-guide.md)
+0. [Старт за 15 минут](#старт-за-15-минут)
+1. [Термины и определения](#1-термины-и-определения)
+2. [Введение](#2-введение)
+3. [Структура событий трассировки](#3-структура-событий-трассировки)
+4. [Быстрый старт](#4-быстрый-старт)
+5. [Слайсы: отрезки в стеке вызовов](#5-слайсы-отрезки-в-стеке-вызовов)
+6. [Отчеты: статистические модели слайсов](#6-отчеты-статистические-модели-слайсов)
+7. [Фильтрация шума: noisyCalls, noisyProperties, callFilter, propertyFilter](#7-фильтрация-шума-noisycalls-noisyproperties-callfilter-propertyfilter)
+8. [API Reference](#8-api-reference)
+9. [Асинхронная трассировка](#9-асинхронная-трассировка)
+10. [Профили трассировки](#10-профили-трассировки)
+11. [Практические примеры](#11-практические-примеры)
+12. [Решение проблем](#12-решение-проблем)
+13. [Чеклист разработчика](#13-чеклист-разработчика)
 
 ---
 
-## 1. Введение
+## 1. Термины и определения
 
-### 1.1 Что такое Tracer?
+| Термин | Определение |
+|--------|-------------|
+| **Стек вызовов (Call Stack)** | Последовательность вложенных вызовов функций в порядке их выполнения |
+| **Глубина стека (Stack Depth)** | Количество вложенных вызовов в текущий момент |
+| **Слайс (Slice)** | Отрезок в стеке вызовов, ограниченный двумя точками: началом (вход в функцию) и концом (выход из функции) |
+| **Отчет (Report)** | Структурированная статистическая модель одного или нескольких слайсов, которая агрегирует, анализирует и визуализирует данные |
+| **Шум (Noise)** | Частые, повторяющиеся или малозначимые вызовы, которые засоряют логи трассировки |
+| **NoisyCalls** | Список полных имен функций, которые считаются "шумными" и полностью исключаются из трассировки |
+| **NoisyProperties** | Список полных имен свойств, которые считаются "шумными" и полностью исключаются из трассировки |
+| **CallFilter** | Функция для гибкой фильтрации вызовов функций по пользовательской логике |
+| **PropertyFilter** | Функция для гибкой фильтрации доступа к свойствам по пользовательской логике |
+| **Событие (Event)** | Уведомление о действии: `functionCall`, `propertyGet`, `propertySet` |
+| **Прокси (Proxy)** | Объект-обертка, перехватывающий операции доступа к свойствам и вызовам методов |
+| **ExecutionContext** | Механизм отслеживания асинхронного контекста выполнения (на основе stack или zone) |
+| **Emitter** | PubSub система для публикации/подписки на события трассировки |
+| **CallId** | Уникальный идентификатор вызова функции в рамках контекста выполнения |
+| **Sticky-слайс** | Слайс, который остается активным после активации до явной деактивации |
+| **Diff** | Сравнение двух последовательных проходов одного слайса для выявления изменений |
+
+---
+
+## 2. Введение
+
+### 2.1 Что такое Tracer?
 
 **Tracer** — это библиотека для runtime-трассировки JavaScript/TypeScript кода, позволяющая:
 
-- Отслеживать вызовы функций (до и после выполнения)
+- Отслеживать вызовы функций (до и после выполнения) с сохранением стека вызовов
 - Мониторить чтение и запись свойств объектов
-- Создавать контекстные "слайсы" для условной трассировки
-- Генерировать структурированные отчеты о работе приложения
-- Автоматически находить регрессии и узкие места
-- **Отслеживать все объекты, свойства и вызовы внутри конкретного метода**
+- Выделять отрезки в стеке вызовов (слайсы) для условного наблюдения
+- Строить статистические модели отрезков (отчеты) для анализа
+- Фильтровать шумные вызовы (таймеры, анимации, служебные функции)
+- Работать с асинхронным кодом через AsyncLocalStorage или Zone.js
+- Поддерживать batch-обработку событий для production-сценариев
 
-### 1.2 Ключевые возможности
+### 2.2 Основная концепция
 
-| Возможность | Описание |
-|-------------|----------|
-| **Трассировка функций** | Обертка любых функций с перехватом вызовов |
-| **Трассировка свойств** | Мониторинг get/set операций |
-| **Слайсы** | Контекстная трассировка с условиями активации |
-| **Отчеты** | Автоматический анализ использования кода |
-| **Мониторинг метода** | Отслеживание всех объектов внутри вызова |
-| **Асинхронность** | Поддержка Promise, async/await, call stacks |
-| **Фильтрация** | Многоуровневая фильтрация шума |
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│   Стек вызовов = последовательность вложенных функций               │
+│         │                                                          │
+│         ▼                                                          │
+│   Слайс = отрезок стека от входа до выхода из функции              │
+│         │                                                          │
+│         ▼                                                          │
+│   Отчет = статистическая модель слайса                              │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-### 1.3 Когда использовать?
+**Простыми словами:**
+- **Стек вызовов** — это видеозапись всего рабочего дня
+- **Слайс** — это вырезанный фрагмент с 10:00 до 11:00
+- **Отчет** — это аналитический отчет по этому фрагменту
 
-```javascript
-// ✅ КОГДА НУЖЕН TRACER:
-// 1. Непонятно, почему свойство изменилось
-// 2. Функция вызывается не оттуда, откуда ожидалось
-// 3. Нужно понять поток выполнения в сложном сценарии
-// 4. Поиск узких мест производительности
-// 5. Анализ покрытия кода тестами
-// 6. Отладка создания и связей объектов
+### 2.3 Проблема шума в трассировке
 
-// ❌ КОГДА НЕ НУЖЕН:
-// 1. Простое логирование (используйте console.log)
-// 2. Production без явной необходимости (есть оверхед)
-// 3. Код с экстремальными требованиями к производительности
+```
+Без фильтрации шума:                    С фильтрацией шума:
+
+[→] CEditorPage.onTimerScroll           [→] PaymentService.processPayment
+[←] CEditorPage.onTimerScroll               [→] PaymentService.validateAmount
+[→] PaintMessageLoop._animation             [←] PaymentService.validateAmount
+[←] PaintMessageLoop._animation             [→] PaymentService.chargeCard
+[→] baseEditorsApi._autoSave                [←] PaymentService.chargeCard
+[←] baseEditorsApi._autoSave            [←] PaymentService.processPayment
+[→] CEditorPage.onTimerScroll           
+[←] CEditorPage.onTimerScroll           (Только важные вызовы, шум отфильтрован)
+[→] PaymentService.processPayment       
+    [→] PaymentService.validateAmount   
+    [←] PaymentService.validateAmount   
+    [→] PaymentService.chargeCard       
+    [←] PaymentService.chargeCard       
+[←] PaymentService.processPayment       
 ```
 
 ---
 
-## 2. Быстрый старт
+## 3. Структура событий трассировки
 
-### 2.1 Установка и подключение (`scorgi86/tracer`)
+Все обработчики трассировки получают объект события. Ниже приведено полное описание интерфейса.
 
-#### Вариант A: Подключение напрямую из GitHub
+### 3.1 Базовый интерфейс события
 
-```bash
-npm i github:scorgi86/tracer
+```typescript
+interface BaseTraceEvent {
+  /** Тип события: 'functionCall', 'propertyGet', 'propertySet' */
+  eventType: string;
+  
+  /** Место в потоке выполнения: 'before' - до действия, 'after' - после действия */
+  place: 'before' | 'after';
+  
+  /** Полное имя в формате 'ClassName.methodName' или 'ClassName.propertyName' */
+  fullName: string;
+  
+  /** Имя класса */
+  className: string;
+  
+  /** Имя функции или свойства */
+  fnKey?: string;
+  
+  /** Имя свойства (для propertyGet/propertySet) */
+  propName?: string;
+  
+  /** Глобальное состояние трассировщика (Map с активными слайсами) */
+  tracerState: Map<string, boolean>;
+  
+  /** Текущая глубина в стеке вызовов */
+  depth?: number;
+  
+  /** Контекст выполнения (стек вызовов) */
+  callStack?: any;
+  
+  /** Текущий объект (this) */
+  thisArg?: any;
+}
 ```
 
-Проверьте, что пакет установился как `tracer`:
+### 3.2 Событие вызова функции (functionCall)
 
-```bash
-npm ls tracer
+Возникает при обернутых вызовах функций.
+
+```typescript
+interface FunctionCallEvent extends BaseTraceEvent {
+  eventType: 'functionCall';
+  
+  /** Аргументы вызова */
+  args: any[];
+  
+  /** Исходная функция */
+  targetFn: Function;
+  
+  /** Временная метка начала выполнения */
+  startedAt: number;
+  
+  /** Уникальный идентификатор вызова (при captureContext: true) */
+  callId?: number;
+  
+  /** ID родительского вызова (при captureContext: true) */
+  parentCallId?: number;
+  
+  /** Статус выполнения (только для after) */
+  status?: 'started' | 'ok' | 'rejected' | 'error';
+  
+  /** Результат выполнения (при status === 'ok') */
+  value?: any;
+  
+  /** Ошибка выполнения (при status === 'rejected' или 'error') */
+  error?: Error;
+  
+  /** Временная метка окончания выполнения (только для after) */
+  endedAt?: number;
+  
+  /** Длительность выполнения в миллисекундах (только для after) */
+  durationMs?: number;
+}
 ```
 
-Если `npm ls` показывает неожиданный вывод, используйте smoke-проверку:
+### 3.3 Событие чтения свойства (propertyGet)
+
+Возникает при доступе к отслеживаемому свойству.
+
+```typescript
+interface PropertyGetEvent extends BaseTraceEvent {
+  eventType: 'propertyGet';
+  
+  /** Имя свойства */
+  propName: string;
+  
+  /** Текущее значение свойства */
+  value: any;
+}
+```
+
+### 3.4 Событие записи свойства (propertySet)
+
+Возникает при изменении отслеживаемого свойства.
+
+```typescript
+interface PropertySetEvent extends BaseTraceEvent {
+  eventType: 'propertySet';
+  
+  /** Имя свойства */
+  propName: string;
+  
+  /** Текущее значение до изменения */
+  curValue: any;
+  
+  /** Новое значение */
+  value: any;
+}
+```
+
+### 3.5 Пример обработки всех событий
 
 ```javascript
-const { Tracer } = require('tracer');
-const probe = Tracer.createProxyFn((a, b) => a + b, 'probe');
-console.log(probe(1, 2)); // 3
+function handleTraceEvent(event) {
+  switch (event.eventType) {
+    case 'functionCall':
+      if (event.place === 'before') {
+        console.log(`→ ${event.fullName}`, event.args);
+      } else {
+        console.log(`← ${event.fullName} (${event.durationMs}ms)`);
+        if (event.status === 'ok') {
+          console.log(`  Результат: `, event.value);
+        } else if (event.error) {
+          console.error(`  Ошибка: `, event.error);
+        }
+      }
+      break;
+      
+    case 'propertyGet':
+      console.log(`📖 Чтение: ${event.className}.${event.propName} = ${event.value}`);
+      break;
+      
+    case 'propertySet':
+      console.log(`✏️ Запись: ${event.className}.${event.propName}: ${event.curValue} → ${event.value}`);
+      break;
+  }
+}
+
+Tracer.traceAll(handleTraceEvent);
 ```
 
-ESM:
+---
+
+## 4. Быстрый старт
+
+### 4.1 Установка
 
 ```javascript
-import { Tracer } from 'tracer';
+// Импорт основного класса
+import { Tracer } from './tracer.js';
+
+// Импорт отчетов
+import { 
+  ReportUsage, 
+  ReportTreeView, 
+  ReportSimple, 
+  ReportSliceDiff,
+  ReportSliceUsage 
+} from './reports/index.js';
 ```
 
-CommonJS:
-
-```javascript
-const { Tracer } = require('tracer');
-```
-
-#### Вариант B: Локальная сборка из репозитория
-
-```bash
-git clone https://github.com/scorgi86/tracer.git
-cd tracer
-npm install
-npm run build
-```
-
-Подключение после сборки:
-
-```javascript
-// CommonJS
-const { Tracer } = require('./dist/tracer.cjs.js');
-
-// ESM
-// import { Tracer } from './dist/tracer.es.js';
-```
-
-#### Быстрая проверка, что подключение работает
-
-```javascript
-const tracedSum = Tracer.createProxyFn((a, b) => a + b, 'sum');
-Tracer.traceCalls((e) => console.log(e.type, e.fullName));
-tracedSum(1, 2);
-```
-
-### 2.2 Первая трассировка
+### 4.2 Первая трассировка
 
 ```javascript
 // 1. Создаем функцию
@@ -146,1051 +362,1344 @@ const tracedCalculate = Tracer.createProxyFn(calculateTotal, 'calculateTotal');
 
 // 3. Подписываемся на события
 Tracer.traceAll((event) => {
-  console.log(\`\${event.type}: \${event.fullName}\`);
+  console.log(`${event.eventType}: ${event.fullName}`);
 });
 
 // 4. Вызываем
 tracedCalculate([{ price: 100 }, { price: 200 }]);
 // Вывод:
-// beforeCallMethod: calculateTotal
-// afterCallMethod: calculateTotal
+// functionCall: calculateTotal
+// functionCall: calculateTotal
 ```
 
-### 2.3 Первый отчет
+### 4.3 Настройка профиля
 
 ```javascript
-// Собираем информацию об использовании
-const usageReport = new ReportUsage({ logProvider: console });
-
-Tracer.traceCalls((event) => {
-  if (event.type === 'beforeCallMethod') {
-    const [className, fnKey] = event.fullName.split('.');
-    usageReport.log({ className, fnKey });
-  }
+// Установка профиля (minimal, balanced, full)
+Tracer.setTraceProfile('balanced', {
+  enableCalls: true,
+  enableProperties: false,
+  suppressNoisy: true
 });
 
-// Выполняем сценарий
-// ... ваш код ...
-
-// Получаем отчет
-usageReport.print();
-// Вывод:
-// UserService
-// PaymentService
-// 
-// Class: UserService.login
-// Class: UserService.logout
-// Class: PaymentService.processPayment
+// Получение текущей конфигурации
+const config = Tracer.getTraceConfig();
+console.log(config);
+// { profile: 'balanced', enableCalls: true, enableProperties: false, suppressNoisy: true, ... }
 ```
-
-### 2.4 Как работает трассировка вызовов (ASCII-схема)
-
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│                         КЛИЕНТСКИЙ КОД                              │
-│ const tracedFn = Tracer.createProxyFn(targetFn, "Order.pay")        │
-│ tracedFn(arg1, arg2)                                                 │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        PROXY-ОБЕРТКА (Tracer)                       │
-│ 1) beforeCallMethod                                                  │
-│ 2) Добавление метаданных (fullName, args, context/slice)            │
-│ 3) Передача события подписчикам                                      │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      ВЫПОЛНЕНИЕ targetFn(...)                        │
-│ 4) Запуск оригинальной функции                                       │
-│ 5) Если внутри вызван tracedFn2(...) -> tracedFn2 проходит           │
-│    этот же цикл независимо (before -> run -> after/error)            │
-│ 6) При исключении формируется errorCallMethod                        │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                 ┌─────────────┴─────────────┐
-                 │                           │
-                 ▼                           ▼
-┌───────────────────────────────┐   ┌────────────────────────────────┐
-│ УСПЕХ                          │   │ ОШИБКА                         │
-│ 7a) afterCallMethod            │   │ 7b) errorCallMethod            │
-│     + result                   │   │     + error info               │
-└───────────────────────────────┘   └────────────────────────────────┘
-                 │                           │
-                 └─────────────┬─────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│            ФИЛЬТРЫ И ПОЛУЧАТЕЛИ (reports / console)                 │
-│ 8) Применяются фильтры                                               │
-│ 9) Событие попадает только в нужные подписки/отчеты                  │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                             РЕЗУЛЬТАТ                                │
-│ 10) tracedFn возвращает result или пробрасывает ошибку               │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**Что значит "вложенные traced-вызовы"**
-
-Это ситуация, когда трассируемая функция внутри себя вызывает другую тоже трассируемую функцию.
-
-Пример:
-
-```javascript
-const a = Tracer.createProxyFn(function a() { b(); }, 'A');
-const b = Tracer.createProxyFn(function b() {}, 'B');
-a();
-```
-
-События будут в таком порядке:
-
-```text
-beforeCallMethod A
-beforeCallMethod B
-afterCallMethod B
-afterCallMethod A
-```
-
-**Что такое фильтры (`profile`, `callFilter`, `noisyCalls`)**
-
-- `profile` - готовый пресет глубины трассировки (`minimal`, `balanced`, `full`).
-- `callFilter` - функция-условие. Если вернула `false`, событие вызова отбрасывается.
-- `noisyCalls` - список "шумных" вызовов, которые нужно исключить из потока.
-- `event` в фильтрах обычно содержит как минимум: `type`, `fullName`, `place`, `timestamp`.
-
-Пример:
-
-```javascript
-Tracer.setTraceProfile('balanced');
-Tracer.configureTracing({
-  noisyCalls: ['CEditorPage.onTimerScroll'],
-  callFilter: ({ fullName }) => !fullName.includes('debug')
-});
-```
-
-### 2.5 Глубина трассировки: как работает и как настраивать
-
-Глубина трассировки определяет, сколько событий вы пропускаете через пайплайн Tracer.
-
-- Меньше глубина -> меньше событий и ниже overhead.
-- Больше глубина -> больше деталей, но выше объем логов.
-
-Практически это настраивается в два шага:
-
-1. Выбрать базовый профиль (`minimal`, `balanced`, `full`).
-2. Точно подрезать поток через `callFilter` и `noisyCalls`.
-
-```javascript
-Tracer.setTraceProfile('balanced'); // minimal | balanced | full
-```
-
-Ориентиры по профилям:
-
-| Профиль | Когда использовать | Что получите |
-|---------|--------------------|--------------|
-| `minimal` | Быстрый локальный запуск, мало шума | Только самые нужные события |
-| `balanced` | Режим по умолчанию для анализа | Баланс детализации и скорости |
-| `full` | Глубокая диагностика сложных багов | Максимум событий, больше overhead |
-
-Типичный состав событий по профилям:
-
-| Профиль | Вызовы функций | События свойств | Диагностический шум |
-|---------|----------------|-----------------|---------------------|
-| `minimal` | Только ключевые | Минимум | Низкий |
-| `balanced` | Основные + полезные промежуточные | Умеренно | Средний |
-| `full` | Почти все доступные | Максимально подробно | Высокий |
-
-Важно: профиль `full` рекомендуется только для коротких диагностических прогонов. Для постоянной работы и особенно production возвращайтесь на `balanced` или `minimal`.
-
-Точная настройка глубины:
-
-```javascript
-Tracer.setTraceProfile('full');
-Tracer.configureTracing({
-  // Убираем известный шум
-  noisyCalls: ['CEditorPage.onTimerScroll'],
-
-  // Пропускаем только интересующие вызовы
-  callFilter: ({ fullName }) =>
-    fullName.includes('OrderService') && !fullName.includes('debug')
-});
-```
-
-Рекомендуемый рабочий цикл:
-
-1. Начните с `balanced`.
-2. Если сигнала мало -> переключитесь на `full`.
-3. Если шума слишком много -> добавьте `noisyCalls` и `callFilter`.
-4. После нахождения причины вернитесь к `balanced` или `minimal`.
 
 ---
 
-## 3. Архитектура и компоненты
+## 5. Слайсы: отрезки в стеке вызовов
 
-### 3.1 Общая схема
+### 5.1 Определение
+
+**Слайс (Slice)** — это отрезок в стеке вызовов, ограниченный двумя точками: началом (вход в функцию) и концом (выход из функции).
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Tracer (API)                              │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │
-│  │ createProxy │ │  observe    │ │ defineSlice │ │   reports   │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Core Components                            │
-├─────────────────┬─────────────────┬─────────────────┬───────────────┤
-│    proxy.js     │   slices.js     │  context.js     │ subscriptions │
-│  Обертки функций│ Управление      │ Асинхронный     │   Подписки    │
-│  и свойств      │ слайсами        │ контекст        │ на события    │
-└─────────────────┴─────────────────┴─────────────────┴───────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Reports                                   │
-├───────────────┬───────────────┬───────────────┬───────────────────┤
-│ ReportUsage   │ ReportSimple  │ ReportTreeView│ ReportSliceDiff   │
-│ Анализ        │ Простой       │ Дерево         │ Сравнение         │
-│ использования │ список        │ вызовов        │ сценариев         │
-└───────────────┴───────────────┴───────────────┴───────────────────┘
+Полный стек вызовов:                    Слайс (отрезок):
+                                        
+        level1                          (вне слайса)
+        │       │                       │
+        │       │                       │
+    ┌───┴───────┴───┐                   │
+    │    level2    │ ◄── НАЧАЛО         │
+    │    │   │     │                   │
+    │    │   │     │                   │
+    │    level3    │                   │
+    │    │   │     │                   │
+    │    │   │     │                   │
+    │    level2    │ ◄── КОНЕЦ          │
+    └──────────────┘                   │
+        level1                          (вне слайса)
 ```
 
-### 3.2 Компоненты
-
-#### Tracer (главный класс)
-Статический API для всей функциональности трассировки.
-
-#### proxy.js
-- \`createProxyFn\` - обертка для функций
-- \`wrapConstructor\` - обертка для классов
-- \`wrapProperty\` / \`wrapProxyPropDescriptor\` - прокси для свойств
-- \`traverse\` - рекурсивный обход объектов
-
-#### slices.js
-- Регистрация слайсов
-- Управление состоянием слайсов
-- Подписка на события в контексте слайса
-
-#### context.js
-- \`ExecutionContext\` - управление асинхронным контекстом
-- Поддержка stack (AsyncLocalStorage) и zone режимов
-
-#### reports/
-Готовые отчеты для анализа трассировки:
-- \`ReportUsage\` - статистика использования классов/методов
-- \`ReportSimple\` - простой список вызовов
-- \`ReportTreeView\` - древовидное представление
-- \`ReportSliceDiff\` - сравнение сценариев
-
----
-
-## 4. API Reference
-
-### 4.1 Основные методы Tracer
-
-#### \`Tracer.createProxyFn(targetFn, eventName)\`
-Оборачивает функцию для трассировки.
+### 5.2 Создание слайса
 
 ```javascript
-const tracedFn = Tracer.createProxyFn(originalFn, 'myFunction');
-// Возвращает функцию с тем же API
-```
-
-#### \`Tracer.observeConstructor(Constructor, className)\`
-Оборачивает класс, все экземпляры трассируются.
-
-```javascript
-const TracedClass = Tracer.observeConstructor(MyClass, 'MyClass');
-const instance = new TracedClass();
-```
-
-#### \`Tracer.observeProperty(target, propName, className)\`
-Наблюдает за конкретным свойством объекта.
-
-```javascript
-Tracer.observeProperty(user, 'name', 'User');
-user.name = 'John'; // Будет отслежено
-```
-
-#### \`Tracer.observeAllProperties(target, className)\`
-Наблюдает за всеми свойствами объекта.
-
-```javascript
-Tracer.observeAllProperties(config, 'Config');
-// Любое изменение любого свойства будет отслежено
-```
-
-#### \`Tracer.observe(target, targetName)\`
-Рекурсивно обходит объект и трассирует все свойства.
-
-```javascript
-Tracer.observe(complexObject, 'AppConfig');
-// Все вложенные свойства также отслеживаются
-```
-
-#### \`Tracer.observePrototype(target, className)\`
-Наблюдает за прототипом класса.
-
-```javascript
-Tracer.observePrototype(UserService, 'UserService');
-// Все методы всех экземпляров трассируются
-```
-
-### 4.2 Слайсы
-
-#### \`Tracer.defineSlice(name, config)\`
-Определяет новый слайс трассировки.
-
-```javascript
-Tracer.defineSlice('payment', {
-  predicate: (event) => event.fullName.includes('Payment'),
-  beforeCall: () => console.log('Payment started'),
-  afterCall: () => console.log('Payment finished'),
+Tracer.defineSlice('sliceName', {
+  // Условие: когда начинается отрезок
+  predicate: (event) => event.fullName === 'TargetFunction',
+  
+  // Вызывается при входе в отрезок
+  beforeCall: () => {
+    console.log('🔴 НАЧАЛО ОТРЕЗКА');
+    return true;  // true = активировать слайс
+  },
+  
+  // Вызывается при выходе из отрезка
+  afterCall: () => {
+    console.log('⚫ КОНЕЦ ОТРЕЗКА');
+    return false; // false = деактивировать слайс
+  },
+  
+  // Начальное состояние
   initial: false,
-  description: 'Payment processing flow'
+  
+  // Описание слайса
+  description: 'Описание отрезка'
 });
 ```
 
-**Параметры config:**
-- \`predicate\` - функция, определяющая активацию слайса
-- \`beforeCall\` - вызывается при входе, возвращает boolean
-- \`afterCall\` - вызывается при выходе, возвращает boolean
-- \`initial\` - начальное состояние (по умолчанию false)
-- \`description\` - описание слайса
-
-#### \`Tracer.traceBySlice(sliceName, callback)\`
-Подписывается на события активного слайса.
+### 5.3 Использование слайса
 
 ```javascript
-Tracer.traceBySlice('payment', (event) => {
-  console.log(\`[Payment] \${event.fullName}\`);
+// Подписка на события ТОЛЬКО внутри отрезка
+Tracer.traceBySlice('sliceName', (event) => {
+  console.log(`[Отрезок] ${event.fullName}`);
 });
+
+// Управление слайсом
+Tracer.enableSlice('sliceName');
+Tracer.disableSlice('sliceName');
+Tracer.disableSliceListeners('sliceName');
+Tracer.untraceBySlice('sliceName');
 ```
 
-#### Пример: определение слайса под конкретный бизнес-сценарий
+### 5.4 Пример: слайс как отрезок
 
 ```javascript
-// Трассируем только процесс оплаты
-Tracer.defineSlice('checkout-payment', {
-  predicate: (event) =>
-    event.fullName.includes('CheckoutService') ||
-    event.fullName.includes('PaymentService'),
-  description: 'Только вызовы checkout/payment'
+function level1() {
+  console.log('Уровень 1 начал');
+  level2();
+  console.log('Уровень 1 закончил');
+}
+
+function level2() {
+  console.log('  Уровень 2 начал');
+  level3();
+  console.log('  Уровень 2 закончил');
+}
+
+function level3() {
+  console.log('    Уровень 3 начал');
+  console.log('    Уровень 3 закончил');
+}
+
+// Оборачиваем функции
+const traced1 = Tracer.createProxyFn(level1, 'level1');
+const traced2 = Tracer.createProxyFn(level2, 'level2');
+const traced3 = Tracer.createProxyFn(level3, 'level3');
+
+// Слайс = отрезок от входа в level2 до выхода из level2
+Tracer.defineSlice('middleOnly', {
+  predicate: (event) => event.fullName === 'level2',
+  beforeCall: () => true,
+  afterCall: () => false
 });
 
-Tracer.enableSlice('checkout-payment');
-
-Tracer.traceBySlice('checkout-payment', (event) => {
-  console.log(`[slice:checkout-payment] ${event.type} ${event.fullName}`);
+Tracer.traceBySlice('middleOnly', (event) => {
+  console.log(`  [Слайс] ${event.fullName}`);
 });
 
-// ... выполняем сценарий оформления заказа ...
-// await checkoutService.placeOrder(order);
+traced1();
 
-Tracer.disableSlice('checkout-payment');
+// Вывод:
+// Уровень 1 начал
+//   Уровень 2 начал
+//   [Слайс] level2
+//     Уровень 3 начал
+//     [Слайс] level3
+//     Уровень 3 закончил
+//     [Слайс] level3
+//   Уровень 2 закончил
+//   [Слайс] level2
+// Уровень 1 закончил
 ```
 
-Что это дает:
-- в отчеты и консоль попадут только события, прошедшие `predicate`;
-- шум от остальных модулей не мешает анализу;
-- слайс можно быстро включать/выключать для локальной диагностики.
-
-#### \`Tracer.enableSlice(sliceName)\` / \`Tracer.disableSlice(sliceName)\`
-Включает/выключает слайс.
+### 5.5 Sticky-слайс (остается активным)
 
 ```javascript
-Tracer.enableSlice('payment');
-// ... трассировка ...
-Tracer.disableSlice('payment');
+Tracer.defineSlice('debugMode', {
+  predicate: (event) => event.fullName === 'enableDebug',
+  beforeCall: () => true,
+  afterCall: () => true,  // true = остаемся активными
+  initial: false
+});
+
+let debugEnabled = false;
+
+function enableDebug() {
+  debugEnabled = true;
+}
+
+function doSomething() {
+  console.log('Операция...');
+}
+
+const tracedEnable = Tracer.createProxyFn(enableDebug, 'enableDebug');
+const tracedDo = Tracer.createProxyFn(doSomething, 'doSomething');
+
+Tracer.traceBySlice('debugMode', (event) => {
+  console.log(`[DEBUG] ${event.fullName}`);
+});
+
+tracedDo();      // Не отслеживается (слайс не активен)
+tracedEnable();  // Активируем слайс
+tracedDo();      // Отслеживается
 ```
 
-### 4.3 Подписки
-
-#### \`Tracer.traceAll(callback)\`
-Подписка на все события.
+### 5.6 Вложенные слайсы
 
 ```javascript
-Tracer.traceAll((event) => {
-  console.log(event.type, event.fullName);
+// Слайс A: весь процесс
+Tracer.defineSlice('fullProcess', {
+  predicate: (event) => event.fullName === 'processAll',
+  beforeCall: () => console.log('🟢 Весь процесс начат'),
+  afterCall: () => console.log('🔴 Весь процесс завершен')
 });
-```
 
-#### \`Tracer.traceCalls(callback)\`
-Только вызовы функций.
-
-```javascript
-Tracer.traceCalls((event) => {
-  if (event.type === 'beforeCallMethod') {
-    console.log(\`Calling: \${event.fullName}\`);
-  }
+// Слайс B: только часть процесса
+Tracer.defineSlice('validationPart', {
+  predicate: (event) => event.fullName === 'validate',
+  beforeCall: () => console.log('  🔵 Валидация начата'),
+  afterCall: () => console.log('  ⚪ Валидация завершена')
 });
-```
 
-#### \`Tracer.traceProperties(callback)\`
-Только доступ к свойствам.
+function processAll() {
+  validate();
+  process();
+}
 
-```javascript
-Tracer.traceProperties((event) => {
-  console.log(\`\${event.type}: \${event.className}.\${event.propName}\`);
-});
-```
+function validate() {
+  console.log('    Валидация...');
+}
 
-### 4.4 Отладка
+function process() {
+  console.log('    Обработка...');
+}
 
-#### \`Tracer.debugOn(eventName, conditionCallback)\`
-Условная точка останова.
-
-```javascript
-Tracer.debugOn('beforeCallMethod', (args) => {
-  return args.fullName === 'PaymentService.processPayment';
-});
-// При вызове processPayment сработает debugger
-```
-
-#### \`Tracer.debugOnceOn(eventName, conditionCallback)\`
-Однократная точка останова.
-
-```javascript
-Tracer.debugOnceOn('propertySet', (args) => {
-  return args.propName === 'balance' && args.newValue < 0;
-});
-// Сработает только при первом отрицательном балансе
+Tracer.observePrototype({ processAll, validate, process }, 'App');
 ```
 
 ---
 
-## 5. Отчеты и аналитика
+## 6. Отчеты: статистические модели слайсов
 
-### 5.1 ReportUsage - Анализ использования
+### 6.1 Определение
+
+**Отчет (Report)** — это структурированная статистическая модель одного или нескольких слайсов, которая агрегирует, анализирует и визуализирует данные о вызовах функций, доступе к свойствам и потоке выполнения внутри этих отрезков.
+
+```
+Стек вызовов → Слайс (отрезок) → Отчет (статистическая модель)
+     │              │                      │
+     ▼              ▼                      ▼
+  сырой поток   вырезанный фрагмент   агрегированные данные
+```
+
+### 6.2 ReportUsage - счетчик вызовов
 
 **Назначение:** Собрать информацию о том, какие классы и методы используются.
 
 ```javascript
 const usageReport = new ReportUsage({ logProvider: console });
 
-// Собираем данные
-Tracer.traceCalls((event) => {
-  if (event.type === 'beforeCallMethod') {
+Tracer.traceBySlice('mySlice', (event) => {
+  if (event.place === 'before') {
     const [className, fnKey] = event.fullName.split('.');
     usageReport.log({ className, fnKey });
   }
 });
 
-// Получаем отчет
 usageReport.print();
 // Вывод:
 // UserService
 // PaymentService
 // 
 // Class: UserService.login
-// Class: UserService.logout
 // Class: PaymentService.processPayment
 ```
 
-**Когда использовать:**
-- Анализ покрытия кода
-- Поиск неиспользуемых методов
-- Документирование API
+### 6.3 ReportTreeView - структура вложенности
 
-### 5.2 ReportSimple - Простой список
-
-**Назначение:** Быстрый дамп всех уникальных вызовов.
-
-```javascript
-const simpleReport = new ReportSimple({ logProvider: console });
-
-Tracer.traceCalls((event) => {
-  if (event.type === 'beforeCallMethod') {
-    const [className, fnKey] = event.fullName.split('.');
-    simpleReport.log({ className, fnKey });
-  }
-});
-
-// Результат: чистый список без дубликатов
-```
-
-**Когда использовать:**
-- Быстрая проверка "кто что вызывает"
-- Создание базового отчета
-
-### 5.3 ReportTreeView - Дерево вызовов
-
-**Назначение:** Визуализация иерархии вызовов.
+**Назначение:** Визуализация иерархии вызовов с отступами.
 
 ```javascript
 const treeReport = new ReportTreeView();
 
-Tracer.traceCalls((event) => {
-  if (event.type === 'beforeCallMethod') {
-    const [className, fnKey] = event.fullName.split('.');
+Tracer.traceBySlice('mySlice', (event) => {
+  if (event.place === 'before') {
     treeReport.log({
       eventType: 'functionCall',
       place: 'before',
-      className,
-      fnKey
-    });
-  }
-  
-  if (event.type === 'afterCallMethod') {
-    const [className, fnKey] = event.fullName.split('.');
+      className: event.className,
+      fnKey: event.fnKey
+    }, JSON.stringify(event.args));
+  } else {
     treeReport.log({
       eventType: 'functionCall',
       place: 'after',
-      className,
-      fnKey
+      className: event.className,
+      fnKey: event.fnKey
     });
   }
 });
 
 const tree = treeReport.getResults();
-// Вывод с отступами, показывающими вложенность
+console.log(tree.join('\n'));
+// Вывод с отступами, показывающими вложенность:
+//  OrderService.processOrder - [{"id":"123"}]
+//    OrderService.validateOrder - none values
+//    OrderService.calculateTotal - none values
+//  OrderService.processOrder - none values
 ```
 
-**Фильтрация шума:**
+### 6.4 ReportSimple - плоский список
+
+**Назначение:** Быстрый дамп уникальных вызовов без дубликатов.
+
 ```javascript
-class FilteredTreeView extends ReportTreeView {
-  constructor(options) {
-    super();
-    this.excludePatterns = options.excludePatterns || [];
-    this.includePatterns = options.includePatterns || [];
-    this.maxDepth = options.maxDepth || Infinity;
+const simpleReport = new ReportSimple({ logProvider: console });
+
+Tracer.traceBySlice('mySlice', (event) => {
+  if (event.place === 'before') {
+    const [className, fnKey] = event.fullName.split('.');
+    simpleReport.log({ className, fnKey });
   }
-  
-  log(args, serializedValues) {
-    const depth = this._stack.length;
-    const fullKey = \`\${args.className}.\${args.fnKey || args.propName}\`;
-    
-    if (depth > this.maxDepth) return;
-    if (this.excludePatterns.some(p => fullKey.match(p))) return;
-    if (this.includePatterns.length && !this.includePatterns.some(p => fullKey.match(p))) return;
-    
-    super.log(args, serializedValues);
-  }
-}
+});
+
+// Вывод: уникальные вызовы без дубликатов
 ```
 
-### 5.4 ReportSliceDiff - Сравнение сценариев
+### 6.5 ReportSliceDiff - сравнение проходов отрезка
 
-**Назначение:** Отслеживает изменения между последовательными вызовами.
+**Назначение:** Отслеживает изменения между последовательными проходами одного слайса.
 
 ```javascript
 const diffReport = new ReportSliceDiff({
   tracer: Tracer,
-  sliceName: 'orderFlow',
-  startPredicate: (event) => event.fullName === 'OrderService.createOrder',
-  endPredicate: (event) => event.fullName === 'OrderService.saveOrder',
-  logProvider: console
+  sliceName: 'comparison',
+  startPredicate: (event) => event.fullName === 'TargetFunction',
+  endPredicate: (event) => event.fullName === 'TargetFunction' && event.place === 'after'
 });
 
+async function targetFunction() {
+  return { ok: true };
+}
+
+// Первый проход
 diffReport.start();
+await targetFunction();
+diffReport.stop();
 
-// Выполняем сценарий
-await processOrder({ items: [{ price: 100 }] });
+// Второй проход
+diffReport.start();
+await targetFunction();
+diffReport.stop();
 
+// Анализ изменений
 const diffs = diffReport.getDiffs();
 diffs.forEach(diff => {
   if (diff.changed.args) {
-    console.log(\`Arguments changed in \${diff.next.fullName}\`);
+    console.log(`🔄 Изменились аргументы в ${diff.next.fullName}`);
+    console.log(`   Было: ${JSON.stringify(diff.prev.args)}`);
+    console.log(`   Стало: ${JSON.stringify(diff.next.args)}`);
   }
 });
-
-diffReport.stop();
 ```
 
-**Кастомный diffBuilder:**
+### 6.6 ReportSliceUsage - полная статистика отрезка
+
+**Назначение:** Собирает полную статистику о классах, методах и свойствах, использованных внутри слайса.
+
 ```javascript
-const customDiff = new ReportSliceDiff({
+const sliceUsage = new ReportSliceUsage({
   tracer: Tracer,
-  sliceName: 'custom',
-  startPredicate: () => true,
-  endPredicate: () => false,
-  diffBuilder: (prev, next) => ({
-    changed: JSON.stringify(prev.args) !== JSON.stringify(next.args)
-  })
+  sliceName: 'mySlice',
+  startPredicate: (event) => event.fullName === 'TargetFunction',
+  endPredicate: (event) => event.fullName === 'TargetFunction' && event.place === 'after'
+});
+
+async function targetFunction() {
+  return { ok: true };
+}
+
+sliceUsage.start();
+await targetFunction();
+sliceUsage.stop();
+
+const run = sliceUsage.getLastRun();
+console.log('📊 Статистика отрезка:');
+console.log(`  Классы: ${run.classes.join(', ')}`);
+console.log(`  Методы: ${run.methods.join(', ')}`);
+console.log(`  Прочитано свойств: ${run.propertiesGet.length}`);
+console.log(`  Изменено свойств: ${run.propertiesSet.length}`);
+console.log(`  Всего событий: ${run.eventsCount}`);
+
+// Получение diff между последовательными прогонами
+const diffs = sliceUsage.getAdjacentDiffs();
+diffs.forEach(diff => {
+  console.log(`Новые методы: ${diff.methods.added}`);
+  console.log(`Исчезнувшие методы: ${diff.methods.removed}`);
 });
 ```
+
+### 6.7 Сравнение отчетов
+
+| Отчет | Что делает | Результат |
+|-------|------------|-----------|
+| **ReportUsage** | Счетчик вызовов | `Class.method: N раз` |
+| **ReportTreeView** | Структура вложенности | Дерево с отступами |
+| **ReportSimple** | Плоский список | Уникальные вызовы |
+| **ReportSliceDiff** | Сравнение проходов | Изменения между вызовами |
+| **ReportSliceUsage** | Полная статистика | Списки классов, методов, свойств |
 
 ---
 
-## 6. Гайд по отладке
+## 7. Фильтрация шума: noisyCalls, noisyProperties, callFilter, propertyFilter
 
-### 6.1 Стратегия: От общего к частному
+### 7.1 Что такое шум?
 
-```
-Шаг 1: Общая картина     → ReportUsage / ReportSimple
-Шаг 2: Визуализация      → ReportTreeView
-Шаг 3: Фокус на модуль   → Слайс + фильтры
-Шаг 4: Сравнение         → ReportSliceDiff
-Шаг 5: Точечная отладка  → debugOn / observeProperty
-```
+**Шум (Noise)** — это вызовы функций или доступ к свойствам, которые:
+- Происходят очень часто (сотни раз в секунду)
+- Не имеют отношения к отлаживаемому сценарию
+- Засоряют логи и мешают анализу
+- Создают лишнюю нагрузку на систему трассировки
 
-### 6.2 Сценарий 1: Поиск источника изменения свойства
+**Примеры шумных вызовов:**
+- `onTimerScroll` — вызывается при каждом скролле (60 раз в секунду)
+- `_animation` — вызывается в каждом кадре анимации
+- `_autoSave` — автоматическое сохранение каждые 30 секунд
+- `console.log` — вспомогательные логи
+- `performance.now()` — измерения производительности
+
+### 7.2 NoisyCalls — фильтрация шумных вызовов функций
+
+**Что делает:** Позволяет указать список полных имен функций, которые следует полностью исключать из трассировки.
 
 ```javascript
-// Проблема: Свойство status меняется непонятно откуда
+Tracer.configureTracing({
+  suppressNoisy: true,  // Включить подавление шума
+  noisyCalls: [
+    'CEditorPage.onTimerScroll',     // Таймер скролла
+    'PaintMessageLoop._animation',   // Анимация
+    'baseEditorsApi._autoSave',      // Автосохранение
+    'Logger.log',                    // Логирование
+    'Metrics.record'                 // Сбор метрик
+  ]
+});
+```
 
-// 1. Наблюдаем за свойством
-Tracer.observeProperty(Order.prototype, 'status', 'Order');
+**Как это работает:**
+```
+Без фильтрации:                     С фильтрацией:
+→ CEditorPage.onTimerScroll         (тишина)
+← CEditorPage.onTimerScroll         (тишина)
+→ PaintMessageLoop._animation       (тишина)
+← PaintMessageLoop._animation       (тишина)
+→ PaymentService.processPayment     → PaymentService.processPayment
+```
 
-// 2. Логируем каждое изменение со стеком
-Tracer.traceProperties((event) => {
-  if (event.propName === 'status') {
-    console.log(\`Status changed: \${event.oldValue} → \${event.newValue}\`);
-    console.log(new Error().stack.split('\\n')[3]); // Кто вызвал
+### 7.3 NoisyProperties — фильтрация шумных свойств
+
+**Что делает:** Позволяет указать список полных имен свойств, доступ к которым следует полностью исключать из трассировки.
+
+```javascript
+Tracer.configureTracing({
+  suppressNoisy: true,
+  noisyProperties: [
+    'Component._internal',      // Внутренние свойства
+    'Cache._timestamp',         // Служебные временные метки
+    'View._renderCount',        // Счетчики рендеринга
+    'Store._listeners'          // Внутренние слушатели
+  ]
+});
+```
+
+### 7.4 CallFilter — пользовательская фильтрация вызовов
+
+**Что делает:** Позволяет написать свою функцию для фильтрации вызовов функций по любому критерию.
+
+```javascript
+Tracer.configureTracing({
+  callFilter: ({ fullName, className, fnKey }) => {
+    // Возвращает true — вызов будет отслежен
+    // Возвращает false — вызов будет пропущен
+    
+    // Пример 1: Только методы сервисов
+    return fullName.includes('Service') || fullName.includes('Repository');
+    
+    // Пример 2: Только методы без подчеркивания (не приватные)
+    // return !fnKey.startsWith('_');
+    
+    // Пример 3: Только методы с определенными аргументами
+    // if (fnKey === 'findById' && true) return true;
+    // return false;
   }
 });
-
-// 3. При необходимости - останавливаемся
-Tracer.debugOn('propertySet', (event) => {
-  return event.propName === 'status' && event.newValue === 'cancelled';
-});
 ```
 
-### 6.3 Сценарий 2: Анализ производительности
+**Полные примеры:**
 
 ```javascript
-// Проблема: Функция работает медленно
-
-// 1. Создаем слайс для замера
-Tracer.defineSlice('perf', {
-  predicate: (event) => event.fullName === 'slowFunction',
-  beforeCall: (args) => {
-    args.startTime = performance.now();
-    return true;
-  },
-  afterCall: (args) => {
-    const duration = performance.now() - args.startTime;
-    if (duration > 100) {
-      console.warn(\`⚠️ Slow call: \${duration}ms\`);
-    }
+// Сценарий 1: Отладка конкретного пользователя
+Tracer.configureTracing({
+  callFilter: ({ fullName }) => {
+    if (fullName === 'UserService.getUser' && true) return true;
+    if (fullName === 'UserService.updateUser' && true) return true;
     return false;
   }
 });
 
-// 2. Собираем статистику
-const timings = [];
-Tracer.traceBySlice('perf', (event) => {
-  if (event.type === 'afterCallMethod') {
-    timings.push(event.duration);
+// Сценарий 2: Только критические операции
+Tracer.configureTracing({
+  callFilter: ({ fullName }) => {
+    const critical = ['Payment', 'Order', 'Auth', 'Checkout'];
+    return critical.some(c => fullName.includes(c));
+  }
+});
+
+// Сценарий 3: Исключение библиотек
+Tracer.configureTracing({
+  callFilter: ({ className }) => {
+    const exclude = ['Logger', 'Metrics', 'Cache', 'EventEmitter'];
+    return !exclude.includes(className);
+  }
+});
+
+// Сценарий 4: Фильтрация по длительности (сбор + анализ)
+let timings = new Map();
+Tracer.configureTracing({
+  callFilter: () => true  // собираем все
+});
+Tracer.traceCalls((event) => {
+  if (event.place === 'after' && event.durationMs > 100) {
+    console.log(`Медленный вызов: ${event.fullName} (${event.durationMs}ms)`);
   }
 });
 ```
 
-### 6.4 Сценарий 3: Отладка асинхронного кода
+### 7.5 PropertyFilter — пользовательская фильтрация свойств
+
+**Что делает:** Позволяет написать свою функцию для фильтрации доступа к свойствам.
 
 ```javascript
-// Проблема: Порядок выполнения Promise неясен
+Tracer.configureTracing({
+  propertyFilter: ({ phase, propName, className, fullName }) => {
+    // phase: 'get' — чтение, 'set' — запись
+    
+    // Пример 1: Не отслеживаем приватные свойства
+    if (propName.startsWith('_')) return false;
+    
+    // Пример 2: Отслеживаем только запись важных свойств
+    if (phase === 'set') {
+      const important = ['status', 'balance', 'total'];
+      return important.includes(propName);
+    }
+    
+    // Пример 3: Не отслеживаем чтение кэша
+    if (className === 'Cache' && phase === 'get') return false;
+    
+    // Пример 4: Только определенные классы
+    return className === 'PaymentService' || className === 'OrderService';
+  }
+});
+```
 
-// Включаем контекст
+**Полный пример:**
+
+```javascript
+class BankAccount {
+  constructor() {
+    this._balance = 1000;     // Приватное (не отслеживаем)
+    this.status = 'active';    // Важное (отслеживаем)
+    this._lastAccess = Date.now(); // Приватное (не отслеживаем)
+  }
+  
+  withdraw(amount) {
+    this._balance -= amount;   // Запись приватного — НЕ отслеживаем
+    if (this._balance < 0) {
+      this.status = 'overdrawn'; // Запись важного — отслеживаем
+    }
+  }
+}
+
+Tracer.configureTracing({
+  propertyFilter: ({ phase, propName }) => {
+    // Не отслеживаем приватные свойства
+    if (propName.startsWith('_')) return false;
+    
+    // Отслеживаем только запись свойств (не чтение)
+    if (phase === 'get') return false;
+    
+    return true;
+  }
+});
+
+const account = new BankAccount();
+Tracer.observeAllProperties(account, 'BankAccount');
+account.withdraw(1500);
+// Будет отслежено только: status изменен на 'overdrawn'
+// _balance изменен НЕ будет отслежено
+```
+
+### 7.6 Комбинирование всех фильтров
+
+```javascript
+// Полная настройка фильтрации для production
+Tracer.configureTracing({
+  // 1. Включаем подавление шума
+  suppressNoisy: true,
+  
+  // 2. Список шумных вызовов (полное исключение)
+  noisyCalls: [
+    'CEditorPage.onTimerScroll',
+    'PaintMessageLoop._animation',
+    'baseEditorsApi._autoSave'
+  ],
+  
+  // 3. Список шумных свойств (полное исключение)
+  noisyProperties: [
+    'Component._renderCount',
+    'Cache._timestamp',
+    'Store._listeners'
+  ],
+  
+  // 4. Пользовательский фильтр вызовов (дополнительная логика)
+  callFilter: ({ fullName }) => {
+    // Только критически важные операции
+    const critical = ['Payment', 'Order', 'Auth'];
+    const isCritical = critical.some(c => fullName.includes(c));
+    
+    // Плюс отслеживаем конкретного пользователя
+    const isSpecificUser = fullName === 'UserService.getUser' && true;
+    
+    return isCritical || isSpecificUser;
+  },
+  
+  // 5. Пользовательский фильтр свойств
+  propertyFilter: ({ phase, propName, className }) => {
+    // Не отслеживаем чтение
+    if (phase === 'get') return false;
+    
+    // Не отслеживаем приватные свойства
+    if (propName.startsWith('_')) return false;
+    
+    // Отслеживаем только важные классы
+    return className === 'PaymentService' || className === 'OrderService';
+  }
+});
+```
+
+### 7.7 Сравнение методов фильтрации
+
+| Метод | Тип | Что делает | Когда использовать |
+|-------|-----|------------|-------------------|
+| **noisyCalls** | Список строк | Полностью исключает указанные вызовы | Для частых, предсказуемых вызовов (таймеры, анимации) |
+| **noisyProperties** | Список строк | Полностью исключает доступ к указанным свойствам | Для служебных свойств (_internal, _cache) |
+| **callFilter** | Функция | Гибкая фильтрация по любой логике | Когда нужны сложные условия (по аргументам, времени, контексту) |
+| **propertyFilter** | Функция | Гибкая фильтрация доступа к свойствам | Когда нужно различать чтение/запись или фильтровать по классам |
+
+### 7.8 Порядок применения фильтров
+
+```
+Tracer применяет фильтры в следующем порядке:
+
+1. Проверка noisyCalls (если suppressNoisy: true)
+   ↓ если имя в списке → вызов полностью пропускается
+   
+2. Проверка callFilter (если задан)
+   ↓ если функция вернула false → вызов пропускается
+   
+3. Событие генерируется и передается в слайсы
+   
+4. Слайс проверяет активность
+   ↓ если слайс активен → событие попадает в traceBySlice
+```
+
+### 7.9 Фильтрация и слайсы: порядок работы
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Трассировка                           │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│     Фильтры (noisyCalls, callFilter)                    │
+│     Применяются КО ВСЕМ вызовам ГЛОБАЛЬНО               │
+│     НЕ имеют доступа к tracerState                      │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│     Слайс (отрезок)                                     │
+│     Проверяет: активен ли слайс в этот момент?         │
+│     Имеет доступ к tracerState                          │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│     traceBySlice(callback)                              │
+│     Callback получает только события внутри отрезка    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Важно:** Фильтры применяются ДО слайсов. Нельзя использовать `tracerState` в фильтрах, так как в момент применения фильтра слайс еще не обновил состояние.
+
+---
+
+## 8. API Reference
+
+### 8.1 Основные методы Tracer
+
+```javascript
+// Обертки функций и классов
+Tracer.createProxyFn(targetFn, eventName);
+Tracer.observeConstructor(Constructor, className);
+Tracer.observeProperty(target, propName, className);
+Tracer.observe(target, targetName);
+Tracer.observePrototype(target, className);
+Tracer.observeAllProperties(target, className);
+Tracer.observeAll(targetList);
+Tracer.observePrototypeAll(targetList);
+Tracer.observeFromExports(exportTarget);
+Tracer.observePrototypesFromExports(exportTarget);
+
+// Слайсы (отрезки в стеке)
+Tracer.defineSlice(name, config);
+Tracer.traceBySlice(name, callback);
+Tracer.traceBySliceOnce(name, callback);
+Tracer.untraceBySlice(name, callback);
+Tracer.enableSlice(name);
+Tracer.disableSlice(name);
+Tracer.disableSliceListeners(name);
+Tracer.traceBySliceSequence(sliceSeq, callback);
+Tracer.getEnabledSlices();
+Tracer.getRegisteredSlices();
+
+// Подписки на события
+Tracer.traceAll(callback);
+Tracer.traceCalls(callback);
+Tracer.traceProperties(callback);
+Tracer.traceAllBatched(callback, options);
+Tracer.traceCallsBatched(callback, options);
+Tracer.tracePropertiesBatched(callback, options);
+Tracer.untraceAll();
+Tracer.untraceCalls();
+Tracer.untraceProperties();
+
+// Конфигурация
+Tracer.configure(options);
+Tracer.setTraceProfile(profileName, overrides);
+Tracer.configureTracing(options);
+Tracer.getTraceConfig();
+
+// Отладка
+Tracer.debugOn(eventName, conditionCallback);
+Tracer.debugOnceOn(eventName, conditionCallback);
+
+// Вспомогательные методы
+Tracer.getCurrentContext();
+Tracer.defineSliceByFunction(sliceName, fn);
+Tracer.defineSliceByFunctionName(sliceName, fnName);
+Tracer.defineSliceByCall(sliceName, target, targetFnName, predicate);
+Tracer.exportSliceScenarios(options);
+Tracer.importSliceScenarios(payload, options);
+
+// Статические свойства
+Tracer.tracerState;  // Map с состояниями слайсов
+Tracer.reports;      // Объект с отчетами
+```
+
+### 8.2 Конфигурация трассировки
+
+```javascript
+Tracer.configureTracing({
+  // Включить/выключить отслеживание вызовов
+  enableCalls: true,
+  
+  // Включить/выключить отслеживание свойств
+  enableProperties: false,
+  
+  // Включить подавление шума
+  suppressNoisy: true,
+  
+  // Список шумных вызовов (полные имена)
+  noisyCalls: ['Class.method'],
+  
+  // Список шумных свойств
+  noisyProperties: ['Class.property'],
+  
+  // Фильтр вызовов (функция)
+  callFilter: ({ fullName, className, fnKey }) => boolean,
+  
+  // Фильтр свойств (функция)
+  propertyFilter: ({ phase, propName, className, fullName }) => boolean,
+  
+  // Включить захват контекста (callId)
+  captureContext: false
+});
+```
+
+### 8.3 Конфигурация слайса
+
+```javascript
+Tracer.defineSlice('sliceName', {
+  // Условие активации слайса (получает событие)
+  predicate: (event) => boolean,
+  
+  // Вызывается при входе в отрезок (возвращает boolean)
+  beforeCall: (event) => boolean,
+  
+  // Вызывается при выходе из отрезка (возвращает boolean)
+  afterCall: (event) => boolean,
+  
+  // Начальное состояние слайса
+  initial: false,
+  
+  // Описание слайса
+  description: 'string'
+});
+```
+
+**Правила возврата beforeCall/afterCall:**
+- `true` → слайс становится активным (sticky или добавляется токен)
+- `false` → слайс деактивируется
+- `undefined` → состояние не меняется
+
+### 8.4 Конфигурация асинхронного контекста
+
+```javascript
+Tracer.configure({ 
+  asyncContext: 'stack',  // 'stack' для Node.js (AsyncLocalStorage)
+  traceProfile: 'balanced',  // опционально
+  traceOptions: {}  // опционально
+});
+
+// Или для браузера с Zone.js
+Tracer.configure({ asyncContext: 'zone' });
+```
+
+### 8.5 Batch-подписки
+
+```javascript
+// Параметры batch-обработки
+const batchOptions = {
+  maxBatchSize: 100,      // Максимальный размер батча
+  flushIntervalMs: 16,    // Интервал сброса (мс)
+  bufferSize: 2000        // Максимальный размер буфера
+};
+
+Tracer.traceAllBatched((batch) => {
+  // batch - массив событий
+  console.log(`Получено ${batch.length} событий`);
+  fetch('/api/trace', { method: 'POST', body: JSON.stringify(batch) });
+}, batchOptions);
+```
+
+---
+
+## 9. Асинхронная трассировка
+
+### 9.1 Настройка контекста
+
+Tracer поддерживает два режима асинхронного контекста:
+
+- **stack** (по умолчанию) - использует AsyncLocalStorage для Node.js
+- **zone** - использует Zone.js для браузеров
+
+```javascript
+// Настройка режима
+Tracer.configure({ asyncContext: 'stack' }); // Для Node.js
+Tracer.configure({ asyncContext: 'zone' });   // Для браузера (требуется Zone.js)
+```
+
+### 9.2 Включение CallId
+
+Для отслеживания асинхронных цепочек необходимо включить захват контекста:
+
+```javascript
+Tracer.setTraceProfile('full', { captureContext: true });
+// или
+Tracer.configureTracing({ captureContext: true });
+```
+
+### 9.3 Пример асинхронной трассировки
+
+```javascript
+class OrderService {
+  async createOrder(items) {
+    console.log('1. Начало createOrder');
+    const validated = await this.validateItems(items);
+    const total = await this.calculateTotal(validated);
+    const payment = await this.processPayment(total);
+    console.log('5. Конец createOrder');
+    return payment;
+  }
+  
+  async validateItems(items) {
+    console.log('2. Валидация');
+    await delay(10);
+    return items.filter(i => i.price > 0);
+  }
+  
+  async calculateTotal(items) {
+    console.log('3. Расчет суммы');
+    await delay(5);
+    return items.reduce((s, i) => s + i.price, 0);
+  }
+  
+  async processPayment(amount) {
+    console.log('4. Платеж');
+    await delay(20);
+    return { success: true, amount };
+  }
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Включаем контекстную трассировку
 Tracer.configure({ asyncContext: 'stack' });
+Tracer.setTraceProfile('full', { captureContext: true });
+
+// Оборачиваем сервис
+const TracedService = Tracer.observeConstructor(OrderService, 'OrderService');
+const service = new TracedService();
 
 // Отслеживаем с callId
 Tracer.traceCalls((event) => {
-  console.log(\`[\${event.callId}] \${event.type}: \${event.fullName}\`);
+  const indent = event.place === 'before' ? '→' : '←';
+  console.log(`[${event.callId}] ${indent} ${event.fullName}`);
+  if (event.parentCallId) {
+    console.log(`     родитель: ${event.parentCallId}`);
+  }
 });
 
-// Видим цепочку вызовов с одинаковыми callId
+await service.createOrder([{ price: 100 }, { price: 200 }]);
+
+// Вывод (callId одинаков для всей цепочки):
+// [1] → OrderService.createOrder
+// [1]   → OrderService.validateItems
+// [1]   ← OrderService.validateItems
+// [1]   → OrderService.calculateTotal
+// [1]   ← OrderService.calculateTotal
+// [1]   → OrderService.processPayment
+// [1]   ← OrderService.processPayment
+// [1] ← OrderService.createOrder
+```
+
+### 9.4 Получение текущего контекста
+
+```javascript
+// В любом месте кода можно получить текущий контекст выполнения
+const context = Tracer.getCurrentContext();
+
+// context - объект Node с методами:
+// - forEach(callback) - обход всех узлов
+// - isContain(callback) - проверка наличия
+// - trace(...values) - вывод в консоль
+
+// Обход контекста для отладки
+context.forEach((node) => {
+  if (node.val) {
+    console.log(`${node.val.className}.${node.val.fnKey}`);
+  }
+});
+
+// Трассировка контекста в консоль
+context.trace('Дополнительная информация');
+```
+
+### 9.5 Асинхронный слайс
+
+```javascript
+// Слайс, который сохраняет контекст через асинхронные вызовы
+Tracer.defineSlice('asyncFlow', {
+  predicate: (event) => event.fullName === 'AsyncProcess.run',
+  beforeCall: () => {
+    console.log('🔵 НАЧАЛО АСИНХРОННОГО ОТРЕЗКА');
+    return true;
+  },
+  afterCall: () => {
+    console.log('🔴 КОНЕЦ АСИНХРОННОГО ОТРЕЗКА');
+    return false;
+  }
+});
+
+Tracer.traceBySlice('asyncFlow', (event) => {
+  console.log(`  [Async] ${event.fullName}`);
+});
+
+Tracer.enableSlice('asyncFlow');
+
+const processor = new AsyncProcessor();
+await processor.process({ id: 1 });
 ```
 
 ---
 
-## 7. Мониторинг объектов внутри метода
+## 10. Профили трассировки
 
-### 7.1 Концепция: "Песочница вызова"
+### 10.1 Доступные профили
+
+| Профиль | enableCalls | enableProperties | suppressNoisy | captureContext |
+|---------|-------------|------------------|---------------|----------------|
+| **minimal** | true | false | true | false |
+| **balanced** | true | false | true | false |
+| **full** | true | true | false | true |
+
+### 10.2 Использование профилей
 
 ```javascript
-// Цель: Отследить ВСЕ, что происходит внутри конкретного метода
-// - Какие объекты создаются
-// - Какие свойства читаются/изменяются  
-// - Какие методы вызываются
-// - Какой путь проходят данные
+// Установка профиля
+Tracer.setTraceProfile('minimal');
+// Только вызовы функций, шум подавлен
 
-class OrderService {
-  async processOrder(orderId) {
-    // Здесь мы хотим видеть все операции
-    const order = await this.loadOrder(orderId);
-    const validator = new OrderValidator();
-    const result = validator.validate(order);
-    return result;
+Tracer.setTraceProfile('full');
+// Все вызовы + свойства + контекст
+
+// Переопределение параметров
+Tracer.setTraceProfile('balanced', {
+  enableProperties: true,  // Включаем свойства поверх balanced
+  noisyCalls: ['onTimerScroll', '_animation'] // Кастомные шумные вызовы
+});
+```
+
+### 10.3 Настройка шумоподавления
+
+```javascript
+Tracer.configureTracing({
+  suppressNoisy: true,
+  noisyCalls: [
+    'CEditorPage.onTimerScroll',
+    'PaintMessageLoop._animation',
+    'baseEditorsApi._autoSave'
+  ],
+  noisyProperties: [
+    'Component._internal',
+    'Cache._timestamp'
+  ]
+});
+```
+
+### 10.4 Фильтрация вызовов
+
+```javascript
+Tracer.configureTracing({
+  callFilter: ({ fullName, className, fnKey }) => {
+    // Только методы сервисов
+    return fullName.includes('Service') || fullName.includes('Repository');
+  },
+  propertyFilter: ({ phase, propName, className }) => {
+    // Не отслеживаем внутренние свойства
+    return !propName.startsWith('_');
   }
+});
+```
+
+---
+
+## 11. Практические примеры
+
+### 11.1 Полный цикл отладки
+
+```javascript
+import { Tracer } from './tracer.js';
+import { ReportUsage, ReportTreeView, ReportSliceDiff, ReportSliceUsage } from './reports/index.js';
+
+class ECommerceService {
+  async checkout(cartId, paymentMethod) {
+    const cart = await this.getCart(cartId);
+    const validated = await this.validateCart(cart);
+    const total = this.calculateTotal(validated);
+    const payment = await this.processPayment(total, paymentMethod);
+    const order = await this.createOrder(cart, payment);
+    await this.sendConfirmation(order);
+    return order;
+  }
+  
+  async getCart(id) { /* ... */ }
+  async validateCart(cart) { /* ... */ }
+  calculateTotal(items) { /* ... */ }
+  async processPayment(amount, method) { /* ... */ }
+  async createOrder(cart, payment) { /* ... */ }
+  async sendConfirmation(order) { /* ... */ }
+}
+
+// ШАГ 1: Настройка
+Tracer.configure({ asyncContext: 'stack' });
+Tracer.setTraceProfile('balanced');
+
+// ШАГ 2: Оборачиваем сервис
+const TracedService = Tracer.observeConstructor(ECommerceService, 'ECommerceService');
+const service = new TracedService();
+
+// ШАГ 3: Сбор общей информации
+const usageReport = new ReportUsage({ logProvider: console });
+Tracer.traceCalls((event) => {
+  if (event.place === 'before') {
+    const [className, fnKey] = event.fullName.split('.');
+    usageReport.log({ className, fnKey });
+  }
+});
+
+// ШАГ 4: Визуализация дерева
+const treeReport = new ReportTreeView();
+
+Tracer.traceCalls((event) => {
+  if (event.place === 'before') {
+    treeReport.log({
+      eventType: 'functionCall',
+      place: 'before',
+      className: event.className,
+      fnKey: event.fnKey
+    }, JSON.stringify(event.args));
+  } else if (event.place === 'after') {
+    treeReport.log({
+      eventType: 'functionCall',
+      place: 'after',
+      className: event.className,
+      fnKey: event.fnKey
+    });
+  }
+});
+
+// ШАГ 5: Создание слайса для детального анализа
+Tracer.defineSlice('checkoutFlow', {
+  predicate: (event) => event.fullName === 'ECommerceService.checkout',
+  beforeCall: () => console.log('🟢 НАЧАЛО ОФОРМЛЕНИЯ'),
+  afterCall: () => console.log('🔴 КОНЕЦ ОФОРМЛЕНИЯ')
+});
+
+// ШАГ 6: Анализ использования слайса
+const sliceUsage = new ReportSliceUsage({
+  tracer: Tracer,
+  sliceName: 'checkoutFlow',
+  startPredicate: (event) => event.fullName === 'ECommerceService.checkout',
+  endPredicate: (event) => event.fullName === 'ECommerceService.checkout' && event.place === 'after'
+});
+
+sliceUsage.start();
+
+// ШАГ 7: Выполнение
+const result = await service.checkout('cart123', 'credit_card');
+
+sliceUsage.stop();
+
+// ШАГ 8: Вывод отчетов
+console.log('\n📊 ОТЧЕТЫ:');
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+console.log('\n1. Использование классов и методов:');
+usageReport.print();
+
+console.log('\n2. Дерево вызовов:');
+treeReport.getResults().slice(0, 20).forEach(line => console.log(line));
+
+console.log('\n3. Статистика слайса:');
+const run = sliceUsage.getLastRun();
+if (run) {
+  console.log(`  Классов: ${run.classes.length}`);
+  console.log(`  Методов: ${run.methods.length}`);
+  console.log(`  Свойств (чтение): ${run.propertiesGet.length}`);
+  console.log(`  Свойств (запись): ${run.propertiesSet.length}`);
+  console.log(`  Всего событий: ${run.eventsCount}`);
 }
 ```
 
-### 7.2 MethodInvestigator - Полный мониторинг метода
+### 11.2 Batch-обработка для production
 
 ```javascript
-class MethodInvestigator {
-  constructor(tracer) {
-    this.tracer = tracer;
-    this.investigations = new Map();
+class TraceCollector {
+  constructor() {
+    this.batch = [];
+    this.isSending = false;
   }
   
-  investigate(methodName, targetObject, options = {}) {
-    const investigation = {
-      id: Date.now(),
-      methodName,
-      startTime: null,
-      endTime: null,
-      objects: new Set(),
-      properties: new Map(),
-      calls: [],
-      dataFlow: [],
-      trackProperties: options.trackProperties !== false,
-      trackObjects: options.trackObjects !== false,
-      trackDataFlow: options.trackDataFlow !== false,
-      result: null,
-      error: null
-    };
+  start() {
+    // Минимальный профиль для production
+    Tracer.setTraceProfile('minimal');
+    Tracer.configureTracing({ suppressNoisy: true });
     
-    this.investigations.set(investigation.id, investigation);
-    this.setupInvestigation(investigation, targetObject);
-    
-    return investigation;
+    // Batch-подписка на все события
+    Tracer.traceAllBatched((events) => {
+      this.batch.push(...events);
+      this.flush();
+    }, { maxBatchSize: 50, flushIntervalMs: 5000 });
   }
   
-  setupInvestigation(investigation, targetObject) {
-    const sliceName = \`investigation_\${investigation.id}\`;
+  async flush() {
+    if (this.isSending || this.batch.length === 0) return;
     
-    this.tracer.defineSlice(sliceName, {
-      predicate: (event) => {
-        if (event.fullName === investigation.methodName && 
-            event.place === 'before') {
-          investigation.startTime = Date.now();
-          console.log(\`\\n🔍 INVESTIGATION STARTED: \${investigation.methodName}\`);
-          return true;
-        }
-        return this.tracer.tracerState.get(sliceName) === true;
-      },
-      beforeCall: () => true,
-      afterCall: (event) => {
-        if (event.fullName === investigation.methodName && 
-            event.place === 'after') {
-          investigation.endTime = Date.now();
-          investigation.result = event.result;
-          this.printReport(investigation);
-          return false;
-        }
-        return true;
-      }
-    });
+    this.isSending = true;
+    const batchToSend = [...this.batch];
+    this.batch = [];
     
-    this.tracer.traceBySlice(sliceName, (event) => {
-      this.collectData(investigation, event);
-    });
-    
-    this.tracer.enableSlice(sliceName);
-    
-    investigation.cleanup = () => {
-      this.tracer.disableSlice(sliceName);
-      this.tracer.untraceBySlice(sliceName);
-    };
-  }
-  
-  collectData(investigation, event) {
-    const time = Date.now() - investigation.startTime;
-    
-    if (event.type === 'beforeCallMethod') {
-      investigation.calls.push({
-        method: event.fullName,
-        args: this.safeClone(event.args),
-        time
-      });
-    }
-    
-    if (investigation.trackObjects && 
-        event.type === 'afterCallMethod' && 
-        event.fullName.includes('constructor')) {
-      investigation.objects.add({
-        type: event.fullName,
-        time
-      });
-    }
-    
-    if (investigation.trackProperties) {
-      if (event.type === 'propertyGet') {
-        const key = \`\${event.className}.\${event.propName}\`;
-        if (!investigation.properties.has(key)) {
-          investigation.properties.set(key, { reads: 0, writes: 0 });
-        }
-        investigation.properties.get(key).reads++;
-      }
-      
-      if (event.type === 'propertySet') {
-        const key = \`\${event.className}.\${event.propName}\`;
-        if (!investigation.properties.has(key)) {
-          investigation.properties.set(key, { reads: 0, writes: 0 });
-        }
-        investigation.properties.get(key).writes++;
-        
-        if (investigation.trackDataFlow) {
-          investigation.dataFlow.push({
-            property: key,
-            from: event.oldValue,
-            to: event.newValue,
-            time
-          });
-        }
-      }
-    }
-  }
-  
-  printReport(investigation) {
-    const duration = investigation.endTime - investigation.startTime;
-    
-    console.log(\`\\n📊 INVESTIGATION REPORT: \${investigation.methodName}\`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(\`⏱️ Duration: \${duration}ms\`);
-    
-    console.log(\`\\n📈 STATISTICS:\`);
-    console.log(\`   Methods called: \${investigation.calls.length}\`);
-    console.log(\`   Objects created: \${investigation.objects.size}\`);
-    console.log(\`   Properties accessed: \${investigation.properties.size}\`);
-    console.log(\`   Data changes: \${investigation.dataFlow.length}\`);
-    
-    if (investigation.calls.length > 0) {
-      const methodCounts = {};
-      investigation.calls.forEach(call => {
-        methodCounts[call.method] = (methodCounts[call.method] || 0) + 1;
-      });
-      
-      console.log(\`\\n🔥 TOP CALLED METHODS:\`);
-      const sorted = Object.entries(methodCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-      sorted.forEach(([method, count]) => {
-        console.log(\`   \${method}: \${count} times\`);
-      });
-    }
-    
-    if (investigation.dataFlow.length > 0) {
-      console.log(\`\\n🔄 LAST DATA CHANGES:\`);
-      investigation.dataFlow.slice(-5).forEach(flow => {
-        console.log(\`   [+\${flow.time}ms] \${flow.property}: \${flow.from} → \${flow.to}\`);
-      });
-    }
-    
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n');
-  }
-  
-  safeClone(value) {
     try {
-      return JSON.parse(JSON.stringify(value));
-    } catch {
-      return String(value);
-    }
-  }
-  
-  async run(investigation, targetObject, ...args) {
-    try {
-      const result = await targetObject[investigation.methodName](...args);
-      investigation.result = result;
-      return result;
+      await fetch('/api/trace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timestamp: Date.now(),
+          events: batchToSend.map(event => ({
+            type: event.eventType,
+            name: event.fullName,
+            duration: event.durationMs,
+            args: event.args
+          }))
+        })
+      });
     } catch (error) {
-      investigation.error = error;
-      throw error;
+      console.error('Ошибка отправки трассировки:', error);
+      // Возвращаем события обратно в batch
+      this.batch.unshift(...batchToSend);
     } finally {
-      if (investigation.cleanup) {
-        investigation.cleanup();
-      }
-      this.investigations.delete(investigation.id);
+      this.isSending = false;
+      if (this.batch.length > 0) this.flush();
     }
   }
+  
+  stop() {
+    Tracer.untraceAll();
+    this.flush();
+  }
 }
 
-// ИСПОЛЬЗОВАНИЕ:
-const investigator = new MethodInvestigator(Tracer);
-const investigation = investigator.investigate('processOrder', orderService, {
-  trackObjects: true,
-  trackProperties: true,
-  trackDataFlow: true
-});
+const collector = new TraceCollector();
+collector.start();
 
-const result = await investigator.run(investigation, orderService, 'ORD-123');
+// Приложение работает...
+setTimeout(() => collector.stop(), 60000);
 ```
 
-### 7.3 Отслеживание цепочек присвоений свойств
+### 11.3 Сравнение двух версий API
 
 ```javascript
-class PropertyPathTracker {
-  constructor(tracer) {
-    this.tracer = tracer;
-    this.paths = new Map();
+async function compareVersions(versionA, versionB, testData) {
+  const results = { A: null, B: null };
+  
+  // Версия A
+  const diffA = new ReportSliceDiff({
+    tracer: Tracer,
+    sliceName: 'versionA',
+    startPredicate: (event) => event.fullName === 'API.process',
+    endPredicate: (event) => event.fullName === 'API.process' && event.place === 'after'
+  });
+  diffA.start();
+  results.A = await versionA.process(testData);
+  diffA.stop();
+  
+  // Версия B
+  const diffB = new ReportSliceDiff({
+    tracer: Tracer,
+    sliceName: 'versionB',
+    startPredicate: (event) => event.fullName === 'API.process',
+    endPredicate: (event) => event.fullName === 'API.process' && event.place === 'after'
+  });
+  diffB.start();
+  results.B = await versionB.process(testData);
+  diffB.stop();
+  
+  // Сравнение
+  const callsA = diffA.getCalls();
+  const callsB = diffB.getCalls();
+  
+  console.log('📊 СРАВНЕНИЕ ВЕРСИЙ:');
+  console.log(`Версия A: ${callsA.length} вызовов`);
+  console.log(`Версия B: ${callsB.length} вызовов`);
+  
+  const maxLen = Math.max(callsA.length, callsB.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (!callsA[i] && callsB[i]) {
+      console.log(`➕ В B добавлен вызов: ${callsB[i].fullName}`);
+    } else if (callsA[i] && !callsB[i]) {
+      console.log(`➖ В B удален вызов: ${callsA[i].fullName}`);
+    } else if (callsA[i]?.fullName !== callsB[i]?.fullName) {
+      console.log(`🔄 Изменен вызов #${i}: ${callsA[i]?.fullName} → ${callsB[i]?.fullName}`);
+    }
   }
   
-  trackMethod(methodName, targetProperty) {
-    this.tracer.defineSlice(\`path_\${methodName}\`, {
-      predicate: (args) => args.fullName === methodName,
-      beforeCall: () => true,
-      afterCall: () => false
-    });
-    
-    this.tracer.traceBySlice(\`path_\${methodName}\`, (event) => {
-      if (event.type === 'propertySet' && event.propName === targetProperty) {
-        this.recordPath(event);
-      }
-    });
-    
-    this.tracer.enableSlice(\`path_\${methodName}\`);
+  return { results, diffA, diffB };
+}
+```
+
+### 11.4 Отслеживание изменения свойства со стеком
+
+```javascript
+class Order {
+  constructor() {
+    this.status = 'pending';
   }
   
-  recordPath(event) {
-    const stack = new Error().stack;
-    console.log(\`\\n🔍 PATH TRACE for \${event.propName}:\`);
-    console.log(\`   \${event.oldValue} → \${event.newValue}\`);
-    console.log(\`   At: \${event.className}\`);
-    console.log(\`   Stack:\`);
-    stack.split('\\n').slice(2, 6).forEach(line => {
-      console.log(\`     \${line.trim()}\`);
-    });
-  }
+  approve() { this.status = 'approved'; }
+  reject() { this.status = 'rejected'; }
+  cancel() { this.status = 'cancelled'; }
 }
 
-// Использование
-const pathTracker = new PropertyPathTracker(Tracer);
-pathTracker.trackMethod('OrderService.processOrder', 'status');
+// Наблюдаем за свойством
+const order = new Order();
+Tracer.observeProperty(order, 'status', 'Order');
+
+// Отслеживаем изменения с полным стеком
+const statusChanges = [];
+
+Tracer.traceProperties((event) => {
+  if (event.propName === 'status') {
+    const change = {
+      from: event.curValue,
+      to: event.value,
+      time: new Date().toISOString(),
+      stack: new Error().stack
+    };
+    
+    statusChanges.push(change);
+    
+    console.log(`\n🔄 ИЗМЕНЕНИЕ STATUS:`);
+    console.log(`  ${change.from} → ${change.to}`);
+    console.log(`  Время: ${change.time}`);
+    console.log(`  Стек вызовов:`);
+    const stackLines = change.stack.split('\n').slice(2, 6);
+    stackLines.forEach(line => console.log(`    ${line.trim()}`));
+    
+    // Проверка на нелегальное изменение
+    const isLegal = stackLines.some(line => 
+      line.includes('.approve') || line.includes('.reject')
+    );
+    
+    if (!isLegal && change.to === 'cancelled') {
+      console.warn(`⚠️ НЕЛЕГАЛЬНАЯ ОТМЕНА! Статус изменен не через approve/reject`);
+    }
+  }
+});
+
+order.approve();
+order.cancel();  // Предупреждение, если cancel нелегальный
 ```
 
 ---
 
-## 8. Практические примеры
+## 12. Решение проблем
 
-### 8.1 Пример: Полный цикл отладки
-
-```javascript
-class OrderCheckout {
-  async process(orderId) {
-    const order = await this.loadOrder(orderId);
-    const validated = await this.validate(order);
-    const payment = await this.processPayment(validated);
-    return payment;
-  }
-}
-
-// ШАГ 1: Общая картина
-const usage = new ReportUsage({ logProvider: console });
-Tracer.traceCalls((e) => {
-  if (e.type === 'beforeCallMethod') {
-    const [c, m] = e.fullName.split('.');
-    usage.log({ className: c, fnKey: m });
-  }
-});
-
-// ШАГ 2: Фокус на метод
-const investigator = new MethodInvestigator(Tracer);
-const investigation = investigator.investigate('process', new OrderCheckout(), {
-  trackObjects: true,
-  trackProperties: true,
-  trackDataFlow: true
-});
-
-// ШАГ 3: Анализ
-const result = await investigator.run(investigation, new OrderCheckout(), 'ORD-123');
-```
-
-### 8.2 Пример: Интеграция с тестами
-
-```javascript
-describe('OrderService', () => {
-  let callSequence = [];
-  
-  beforeEach(() => {
-    callSequence = [];
-    Tracer.traceCalls((event) => {
-      if (event.type === 'beforeCallMethod') {
-        callSequence.push(event.fullName);
-      }
-    });
-  });
-  
-  afterEach(() => {
-    Tracer.untraceCalls();
-  });
-  
-  it('should call methods in correct order', async () => {
-    const service = new OrderService();
-    await service.createOrder({ items: [] });
-    
-    expect(callSequence).toEqual([
-      'OrderService.createOrder',
-      'OrderService.validateOrder',
-      'OrderService.calculateTotal',
-      'OrderService.saveOrder'
-    ]);
-  });
-});
-```
-
-### 8.3 Пример: Сравнение двух сценариев
-
-```javascript
-// Базовый сценарий
-const baseline = new ReportSliceDiff({
-  tracer: Tracer,
-  sliceName: 'baseline',
-  startPredicate: () => true,
-  endPredicate: () => false
-});
-
-baseline.start();
-await processOrder({ items: [{ price: 100 }] });
-baseline.stop();
-
-// Новый сценарий
-const current = new ReportSliceDiff({
-  tracer: Tracer,
-  sliceName: 'current',
-  startPredicate: () => true,
-  endPredicate: () => false
-});
-
-current.start();
-await processOrder({ items: [{ price: 200 }, { price: 300 }] });
-current.stop();
-
-// Сравниваем
-const baselineCalls = baseline.getCalls();
-const currentCalls = current.getCalls();
-
-for (let i = 0; i < Math.max(baselineCalls.length, currentCalls.length); i++) {
-  if (baselineCalls[i]?.fullName !== currentCalls[i]?.fullName) {
-    console.error(\`Regression at index \${i}\`);
-  }
-}
-```
-
----
-
-## 9. Решение проблем
-
-### 9.1 Частые проблемы
+### 12.1 Частые проблемы и решения
 
 | Проблема | Решение |
 |----------|---------|
-| Слайс не активируется | Проверьте predicate: добавьте console.log внутрь |
-| Слишком много событий | Используйте фильтры или слайсы |
-| Асинхронные вызовы не связаны | Настройте \`Tracer.configure({ asyncContext: 'stack' })\` |
-| Утечка памяти | Всегда вызывайте \`untrace\` или \`disableSlice\` |
-| Не видно создание объектов | Используйте MethodInvestigator с trackObjects: true |
+| Слайс не активируется | Проверьте predicate, добавьте `console.log` внутрь |
+| Асинхронные вызовы не связаны | Настройте `Tracer.configure({ asyncContext: 'stack' })` |
+| Слишком много событий | Используйте профиль `minimal` или batch-подписки |
+| Утечка памяти | Всегда вызывайте `untraceBySlice` или `disableSliceListeners` |
+| Свойства не отслеживаются | Убедитесь, что свойство configurable и не является функцией |
+| Нет callId в событиях | Включите `captureContext: true` в профиле |
+| Шумные вызовы не фильтруются | Добавьте их в `noisyCalls` точным именем |
+| Колбэк вызывается слишком часто | Используйте batch-подписки |
 
-### 9.2 Отладка самого Tracer
+### 12.2 Отладка самого Tracer
 
 ```javascript
 // Включение диагностики
 Tracer.traceAll((event) => {
-  console.log(\`[DIAG] \${event.type}: \${event.fullName}\`);
+  console.log(`[DIAG] ${event.eventType}: ${event.fullName}`);
 });
 
 // Проверка состояния
-console.log('Active slices:', Tracer.getEnabledSlices());
-console.log('Registered slices:', Tracer.getRegisteredSlices());
-console.log('Current context:', Tracer.getCurrentContext());
+console.log('Активные слайсы:', Tracer.getEnabledSlices());
+console.log('Зарегистрированные слайсы:', Tracer.getRegisteredSlices());
+console.log('Текущий контекст:', Tracer.getCurrentContext());
+console.log('Конфигурация:', Tracer.getTraceConfig());
 ```
 
-### 9.3 Советы по производительности
+### 12.3 Советы по производительности
 
 ```javascript
 // ✅ ХОРОШО: Фильтрация на уровне predicate
@@ -1206,137 +1715,195 @@ Tracer.defineSlice('slow', {
 });
 
 // ✅ ХОРОШО: Очистка подписок
+const callback = (event) => console.log(event.fullName);
 const subscription = Tracer.traceAll(callback);
 // ... после использования
 Tracer.untraceAll();
+
+// ✅ ХОРОШО: Использование batch-подписок для production
+Tracer.traceAllBatched(callback, { maxBatchSize: 100, flushIntervalMs: 100 });
+
+// ✅ ХОРОШО: Минимальный профиль для production
+Tracer.setTraceProfile('minimal');
+Tracer.configureTracing({ suppressNoisy: true });
+
+// ❌ ИЗБЕГАЙТЕ:
+// - traceAll без фильтрации в production
+// - тяжелые операции в колбеках
+// - синхронную отправку данных на сервер
+// - deep-обход больших объектов
 ```
 
 ---
 
-## 10. Чеклист разработчика
+## 13. Чеклист разработчика
 
-### 10.1 Перед началом отладки
+### 13.1 Перед началом отладки
 
 ```markdown
-- [ ] Определить цель: что именно нужно отследить?
-- [ ] Выбрать уровень детализации (минимальный/нормальный/полный)
-- [ ] Решить, нужны ли слайсы или глобальная трассировка
+- [ ] Определить цель трассировки (баг, производительность, анализ)
+- [ ] Выбрать профиль (minimal/balanced/full)
 - [ ] Настроить асинхронный контекст если нужно
+- [ ] Определить нужные слайсы
+- [ ] Изучить структуру событий
 ```
 
-### 10.2 В процессе отладки
+### 13.2 В процессе отладки
 
 ```markdown
 - [ ] Начать с общего отчета (ReportUsage)
-- [ ] Сузить до проблемного модуля (слайс)
 - [ ] Визуализировать поток (ReportTreeView)
-- [ ] При необходимости - сравнить сценарии (ReportSliceDiff)
-- [ ] Использовать MethodInvestigator для мониторинга конкретного метода
+- [ ] Сузить до проблемного модуля (слайс)
+- [ ] Использовать event.callId для отслеживания асинхронных цепочек
 - [ ] Использовать debugOn для остановки в нужном месте
+- [ ] Применить фильтрацию шума если нужно
 ```
 
-### 10.3 После отладки
+### 13.3 После завершения
 
 ```markdown
-- [ ] Отключить трассировку (untraceAll)
-- [ ] Очистить подписки (disableSliceListeners)
+- [ ] Отключить подписки (untraceAll)
+- [ ] Очистить слайсы (disableSliceListeners)
+- [ ] Сохранить отчеты для анализа
 - [ ] Удалить обертки если не нужны больше
-- [ ] Сохранить отчеты для документации
 ```
 
-### 10.4 Шаблон для нового отчета
+### 13.4 Настройка фильтрации
+
+```markdown
+- [ ] Определить шумные вызовы (таймеры, анимации)
+- [ ] Добавить их в noisyCalls
+- [ ] Определить шумные свойства (_internal, _cache)
+- [ ] Добавить их в noisyProperties
+- [ ] Написать callFilter для сложной логики
+- [ ] Написать propertyFilter для различения чтения/записи
+```
+
+### 13.5 Проверка фильтрации
+
+```markdown
+- [ ] Включить suppressNoisy: true
+- [ ] Запустить трассировку
+- [ ] Убедиться, что шумные вызовы пропадают
+- [ ] Убедиться, что важные вызовы остаются
+```
+
+### 13.6 Шаблон обработчика событий
 
 ```javascript
-class CustomReport extends BaseReport {
-  constructor(options) {
-    super(options);
-    this.data = new Map();
-  }
-  
-  log(event, args) {
-    const key = \`\${args.className}.\${args.fnKey}\`;
-    this.data.set(key, (this.data.get(key) || 0) + 1);
-  }
-  
-  print() {
-    for (const [key, count] of this.data) {
-      console.log(\`\${key}: \${count} calls\`);
+// Полный шаблон обработчика всех типов событий
+class TraceHandler {
+  onEvent(event) {
+    switch (event.eventType) {
+      case 'functionCall':
+        this.onFunctionCall(event);
+        break;
+      case 'propertyGet':
+        this.onPropertyGet(event);
+        break;
+      case 'propertySet':
+        this.onPropertySet(event);
+        break;
     }
   }
+  
+  onFunctionCall(event) {
+    if (event.place === 'before') {
+      // До вызова
+      console.log(`→ ${event.fullName}`, event.args);
+    } else {
+      // После вызова
+      console.log(`← ${event.fullName} (${event.durationMs}ms)`);
+      if (event.status === 'ok') {
+        console.log(`  Результат:`, event.value);
+      } else if (event.error) {
+        console.error(`  Ошибка:`, event.error);
+      }
+    }
+  }
+  
+  onPropertyGet(event) {
+    console.log(`📖 ${event.className}.${event.propName} = ${event.value}`);
+  }
+  
+  onPropertySet(event) {
+    console.log(`✏️ ${event.className}.${event.propName}: ${event.curValue} → ${event.value}`);
+  }
 }
+
+const handler = new TraceHandler();
+Tracer.traceAll((event) => handler.onEvent(event));
 ```
 
 ---
 
-## 11. Заключение
+## 14. Быстрая шпаргалка
 
-### 11.1 Резюме
-
-Tracer предоставляет мощный инструментарий для:
-
-1. **Понимания кода** - видите реальный поток выполнения
-2. **Отладки багов** - находите источник проблем
-3. **Анализа производительности** - выявляете узкие места
-4. **Тестирования** - проверяете последовательности вызовов
-5. **Мониторинга объектов** - отслеживаете создание и связи объектов
-6. **Документации** - генерируете отчеты об использовании
-
-### 11.2 Лучшие практики
-
-```javascript
-// ✅ DO:
-// 1. Используйте слайсы для фокусировки
-Tracer.defineSlice('target', { predicate: (event) => /* условие */ });
-
-// 2. Используйте MethodInvestigator для глубокого анализа
-const investigator = new MethodInvestigator(Tracer);
-const inv = investigator.investigate('methodName', target);
-
-// 3. Фильтруйте шум на ранних этапах
-const tree = new FilteredTreeView({ excludePatterns: [/^_/] });
-
-// 4. Очищайте за собой
-Tracer.untraceAll();
-
-// ❌ DON'T:
-// 1. Не включайте traceAll в production без необходимости
-// 2. Не забывайте про асинхронный контекст
-// 3. Не игнорируйте утечки подписок
-```
-
-### 11.3 Быстрая шпаргалка
+### 14.1 Основные команды
 
 ```javascript
 // Быстрый старт
 Tracer.traceAll(console.log);
+const myFn = () => 'ok';
 Tracer.createProxyFn(myFn, 'name')();
 
 // Слайсы
-Tracer.defineSlice('name', predicate);
+Tracer.defineSlice('name', { predicate: (e) => e.fullName === 'target' });
+const callback = (event) => console.log(event.fullName);
 Tracer.traceBySlice('name', callback);
 
 // Отчеты
 new ReportUsage({ logProvider: console }).print();
 new ReportTreeView().getResults();
 
-// Мониторинг метода
-const investigator = new MethodInvestigator(Tracer);
-const inv = investigator.investigate('methodName', target);
-await investigator.run(inv, target, ...args);
-
 // Отладка
-Tracer.debugOn('event', condition);
+const condition = (e) => e.fullName === 'target';
+Tracer.debugOn('beforeCallMethod', condition);
+const obj = { prop: 1 };
 Tracer.observeProperty(obj, 'prop', 'Class');
 
 // Управление
 Tracer.enableSlice('name');
 Tracer.disableSlice('name');
 Tracer.untraceAll();
+
+// Конфигурация
+Tracer.setTraceProfile('minimal');
+Tracer.configure({ asyncContext: 'stack' });
+Tracer.configureTracing({ suppressNoisy: true, noisyCalls: ['method'] });
+```
+
+### 14.2 Консольные команды для браузера
+
+```javascript
+// Быстрые команды для консоли браузера
+traceStart = () => Tracer.traceAll(console.log);
+traceStop = () => Tracer.untraceAll();
+traceStats = () => {
+  console.log('Slices:', Tracer.getEnabledSlices());
+  console.log('Config:', Tracer.getTraceConfig());
+};
+traceFilter = (pattern) => {
+  Tracer.configureTracing({
+    callFilter: ({ fullName }) => fullName.includes(pattern)
+  });
+};
+traceContext = () => console.log(Tracer.getCurrentContext());
 ```
 
 ---
 
-**Tracer v2.0 | Документация**
+**Tracer v4.2 | Документация**
+
+```javascript
+// Скачать этот документ:
+// const blob = new Blob([documentation], { type: 'text/markdown' });
+// const url = URL.createObjectURL(blob);
+// const a = document.createElement('a');
+// a.href = url;
+// a.download = 'tracer-documentation.md';
+// a.click();
+```
 
 
 

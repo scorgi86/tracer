@@ -1,0 +1,17 @@
+﻿title: Tracer Documentation
+lang: ru
+description: Документация Tracer для отладки и анализа legacy-кода
+theme: minima
+markdown: kramdown
+kramdown:
+  input: GFM
+header_pages:
+  - index.md
+  - tracer-dev-guide.md
+  - tracer-ai-guide.md
+  - getting-started.md
+  - slices.md
+  - async.md
+  - reports-guide.md
+  - context.md
+  - readme.md

@@ -1,3 +1,8 @@
+﻿---
+title: "Context"
+layout: default
+---
+
 # Context
 
 ## Runtime strategy
@@ -40,3 +45,4 @@ The current tracer runtime is optimized for stability-first integration in compl
 2. Manual property watchers stay active globally, regardless of active slices.
 3. Slice reports (`ReportSliceDiff`, `ReportSliceUsage`) aggregate only slice-contained events.
 4. Slice lifecycle is controlled by start/end predicates and can be exported/imported across teams.
+

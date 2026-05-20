@@ -1,4 +1,9 @@
-﻿# Tracer: Отчеты
+﻿---
+title: "Tracer: Отчеты"
+layout: default
+---
+
+# Tracer: Отчеты
 
 Этот гайд показывает, как перейти от "сырых" событий к понятным выводам.
 
@@ -90,3 +95,4 @@ const diffReport = new ReportSliceDiff({ logProvider: console });
 - [ ] Результат воспроизводится минимум 2 раза
 
 - [Полная документация](./index.md)
+
