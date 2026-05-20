@@ -8,14 +8,23 @@
 
 1. [Введение](#1-введение)
 2. [Быстрый старт](#2-быстрый-старт)
-3. [Архитектура и компоненты](#3-архитектура-и-компоненты)
-4. [API Reference](#4-api-reference)
-5. [Отчеты и аналитика](#5-отчеты-и-аналитика)
-6. [Гайд по отладке](#6-гайд-по-отладке)
-7. [Мониторинг объектов внутри метода](#7-мониторинг-объектов-внутри-метода)
-8. [Практические примеры](#8-практические-примеры)
-9. [Решение проблем](#9-решение-проблем)
-10. [Чеклист разработчика](#10-чеклист-разработчика)
+3. [Как работает трассировка вызовов (ASCII)](#24-как-работает-трассировка-вызовов-ascii-схема)
+4. [Глубина трассировки](#25-глубина-трассировки-как-работает-и-как-настраивать)
+5. [Архитектура и компоненты](#3-архитектура-и-компоненты)
+6. [API Reference](#4-api-reference)
+7. [Отчеты и аналитика](#5-отчеты-и-аналитика)
+8. [Гайд по отладке](#6-гайд-по-отладке)
+9. [Мониторинг объектов внутри метода](#7-мониторинг-объектов-внутри-метода)
+10. [Практические примеры](#8-практические-примеры)
+11. [Решение проблем](#9-решение-проблем)
+12. [Чеклист разработчика](#10-чеклист-разработчика)
+
+## Быстрая навигация по страницам
+
+- [Быстрый старт](./getting-started.md)
+- [Слайсы](./slices.md)
+- [Асинхронность](./async.md)
+- [Отчеты](./reports-guide.md)
 
 ---
 
@@ -71,6 +80,12 @@
 
 ```bash
 npm i github:scorgi86/tracer
+```
+
+Проверьте, что пакет установился как `tracer`:
+
+```bash
+npm ls tracer
 ```
 
 ESM:
@@ -238,6 +253,7 @@ afterCallMethod A
 - `profile` - готовый пресет глубины трассировки (`minimal`, `balanced`, `full`).
 - `callFilter` - функция-условие. Если вернула `false`, событие вызова отбрасывается.
 - `noisyCalls` - список "шумных" вызовов, которые нужно исключить из потока.
+- `event` в фильтрах обычно содержит как минимум: `type`, `fullName`, `place`, `timestamp`.
 
 Пример:
 
@@ -272,6 +288,8 @@ Tracer.setTraceProfile('balanced'); // minimal | balanced | full
 | `minimal` | Быстрый локальный запуск, мало шума | Только самые нужные события |
 | `balanced` | Режим по умолчанию для анализа | Баланс детализации и скорости |
 | `full` | Глубокая диагностика сложных багов | Максимум событий, больше overhead |
+
+Важно: профиль `full` рекомендуется только для коротких диагностических прогонов. Для постоянной работы и особенно production возвращайтесь на `balanced` или `minimal`.
 
 Точная настройка глубины:
 
@@ -415,7 +433,7 @@ Tracer.observePrototype(UserService, 'UserService');
 
 ```javascript
 Tracer.defineSlice('payment', {
-  predicate: (args) => args.fullName.includes('Payment'),
+  predicate: (event) => event.fullName.includes('Payment'),
   beforeCall: () => console.log('Payment started'),
   afterCall: () => console.log('Payment finished'),
   initial: false,
@@ -725,7 +743,7 @@ Tracer.debugOn('propertySet', (event) => {
 
 // 1. Создаем слайс для замера
 Tracer.defineSlice('perf', {
-  predicate: (args) => args.fullName === 'slowFunction',
+  predicate: (event) => event.fullName === 'slowFunction',
   beforeCall: (args) => {
     args.startTime = performance.now();
     return true;
@@ -1254,7 +1272,7 @@ Tracer предоставляет мощный инструментарий дл
 ```javascript
 // ✅ DO:
 // 1. Используйте слайсы для фокусировки
-Tracer.defineSlice('target', { predicate: (args) => /* условие */ });
+Tracer.defineSlice('target', { predicate: (event) => /* условие */ });
 
 // 2. Используйте MethodInvestigator для глубокого анализа
 const investigator = new MethodInvestigator(Tracer);
@@ -1305,5 +1323,6 @@ Tracer.untraceAll();
 ---
 
 **Tracer v2.0 | Документация**
+
 
 
