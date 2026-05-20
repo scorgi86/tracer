@@ -201,12 +201,6 @@ const nextCallId = () => ++callSeq;
 export const wrapConstructor = (OriginalConstructor, className) => {
     const name = OriginalConstructor.name || className;
 
-    if (OriginalConstructor.isPatched === true) {
-        return OriginalConstructor;
-    }
-    
-    OriginalConstructor.isPatched = true;
-
     const result = function(...args) {
         if (new.target) {
             const instance = new OriginalConstructor(...arguments);
@@ -244,12 +238,13 @@ export const wrapConstructor = (OriginalConstructor, className) => {
  */
 export const createProxyFn = ({fnKey, targetFn, className}) => {
     const proxyFn = function(...args) {
+        const finalClassName = className || this?.constructor?.name || 'unknown';
         const traceOptions = getTraceOptions();
         if (traceOptions.enableCalls === false) {
             return targetFn.apply(this, args);
         }
 
-        const fullName = `${className}.${fnKey}`;
+        const fullName = `${finalClassName}.${fnKey}`;
         if (traceOptions.suppressNoisy && includesByPatterns(fullName, traceOptions.noisyCalls)) {
             return targetFn.apply(this, args);
         }
@@ -270,7 +265,7 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
         const data = {
             eventType: 'functionCall',
             fnKey,
-            className,
+            className: finalClassName,
             fullName,
             targetFn,
             thisArg: this,
@@ -440,7 +435,8 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
 
             const value = Reflect.get(thisTarget, subProp);
             const traceOptions = getTraceOptions();
-            if (traceOptions.enableProperties !== true) {
+            const hasPropertyGetSubscribers = emitter.has('propertyGet');
+            if (!hasPropertyGetSubscribers && traceOptions.enableProperties !== true) {
                 return value;
             }
 
@@ -452,8 +448,7 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
                 className,
                 fullName,
             }) === true;
-            const shouldNotifyGet = traceOptions.enableProperties
-                && emitter.has('propertyGet')
+            const shouldNotifyGet = hasPropertyGetSubscribers
                 && passPropertyFilter
                 && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
 
@@ -501,7 +496,8 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
                 return Reflect.set(thisTarget, subProp, newValue);
             }
             const traceOptions = getTraceOptions();
-            if (traceOptions.enableProperties !== true) {
+            const hasPropertySetSubscribers = emitter.has('propertySet');
+            if (!hasPropertySetSubscribers && traceOptions.enableProperties !== true) {
                 return Reflect.set(thisTarget, subProp, newValue);
             }
 
@@ -513,8 +509,7 @@ export const wrapProperty = (target, parentPropName, className, options = {}) =>
                 className,
                 fullName,
             }) === true;
-            const shouldNotifySet = traceOptions.enableProperties
-                && emitter.has('propertySet')
+            const shouldNotifySet = hasPropertySetSubscribers
                 && passPropertyFilter
                 && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
 
@@ -600,7 +595,8 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
          */
         get() {
             const traceOptions = getTraceOptions();
-            if (traceOptions.enableProperties !== true) {
+            const hasPropertyGetSubscribers = emitter.has('propertyGet');
+            if (!hasPropertyGetSubscribers && traceOptions.enableProperties !== true) {
                 return originalGetter ? originalGetter.call(this) : internalValue;
             }
             const fullName = `${className}.${propName}`;
@@ -610,8 +606,7 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
                 className,
                 fullName,
             }) === true;
-            const shouldNotifyGet = traceOptions.enableProperties
-                && emitter.has('propertyGet')
+            const shouldNotifyGet = hasPropertyGetSubscribers
                 && passPropertyFilter
                 && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
             if (shouldNotifyGet) {
@@ -648,7 +643,8 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
             };
 
             const traceOptions = getTraceOptions();
-            if (traceOptions.enableProperties !== true) {
+            const hasPropertySetSubscribers = emitter.has('propertySet');
+            if (!hasPropertySetSubscribers && traceOptions.enableProperties !== true) {
                 if (typeof args.value === 'object' && args.value !== null && !isHostObject(args.value)) {
                     internalValue = wrapProperty(args.value, propName, className);
                 } else {
@@ -662,8 +658,7 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
                 className,
                 fullName: args.fullName,
             }) === true;
-            const shouldNotifySet = traceOptions.enableProperties
-                && emitter.has('propertySet')
+            const shouldNotifySet = hasPropertySetSubscribers
                 && passPropertyFilter
                 && (!traceOptions.suppressNoisy || !includesByPatterns(args.fullName, traceOptions.noisyProperties));
             if (shouldNotifySet) {
@@ -722,7 +717,8 @@ wrapProxyPropDescriptor.isProxy = (target, propName) => {
  * service.getUser(1); // Вызов метода отслеживается
  * service.updateUser(1, { name: 'Jane' }); // Вызов метода отслеживается
  */
-export function traverse(obj, className = '') {
+export function traverse(obj, className = '', options = {}) {
+    const includeProperties = options.includeProperties === true;
     if (!obj || typeof obj !== 'object') {
         return;
     }
@@ -751,7 +747,7 @@ export function traverse(obj, className = '') {
                     Object.defineProperty(obj, fnKey, { ...descriptor, value: proxyFn });
                 }
             }
-            else if (!wrapProxyPropDescriptor.isProxy(obj, fnKey)) {
+            else if (includeProperties && !wrapProxyPropDescriptor.isProxy(obj, fnKey)) {
                 wrapProxyPropDescriptor(obj, fnKey, className);
             }
         } catch (e) {

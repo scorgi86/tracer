@@ -131,8 +131,11 @@ const observePropertyObjectShallow = (target, parentPropName, className) => {
         const value = originalGetter ? originalGetter.call(this) : internalValue;
         const traceOptions = getTraceOptions();
         const fullName = `${className}.${propPath}`;
-        const shouldNotifyGet = traceOptions.enableProperties
-          && emitter.has("propertyGet")
+        const hasPropertyGetSubscribers = emitter.has("propertyGet");
+        if (!hasPropertyGetSubscribers && traceOptions.enableProperties !== true) {
+          return value;
+        }
+        const shouldNotifyGet = hasPropertyGetSubscribers
           && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
         if (shouldNotifyGet) {
           emitter.notify("propertyGet", {
@@ -158,8 +161,11 @@ const observePropertyObjectShallow = (target, parentPropName, className) => {
         }
         const traceOptions = getTraceOptions();
         const fullName = `${className}.${propPath}`;
-        const shouldNotifySet = traceOptions.enableProperties
-          && emitter.has("propertySet")
+        const hasPropertySetSubscribers = emitter.has("propertySet");
+        if (!hasPropertySetSubscribers && traceOptions.enableProperties !== true) {
+          return;
+        }
+        const shouldNotifySet = hasPropertySetSubscribers
           && (!traceOptions.suppressNoisy || !includesByPatterns(fullName, traceOptions.noisyProperties));
         if (shouldNotifySet) {
           emitter.notify("propertySet", {
@@ -392,7 +398,8 @@ export class Tracer {
    * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
    */
   static observe(target, targetName) {
-    traverse(target, targetName || target.name);
+    const finalTargetName = targetName || target?.name || target?.constructor?.name || "Object";
+    traverse(target, finalTargetName);
 
     return Tracer;
   }
@@ -408,7 +415,8 @@ export class Tracer {
     if (!target.prototype) {
       throw new Error(`Не найден прототип класса ${className}`);
     }
-    traverse(target.prototype, `${target.name}`);
+    const finalClassName = className || target?.name || "AnonymousClass";
+    traverse(target.prototype, `${finalClassName}`);
 
     return Tracer;
   }
@@ -465,7 +473,7 @@ export class Tracer {
     );
 
     classList.forEach((className) => {
-      Tracer.observe(exportTarget[className]);
+      Tracer.observe(exportTarget[className], className);
     });
 
     return Tracer;
@@ -489,7 +497,7 @@ export class Tracer {
 
     classList.forEach((className) => {
       map.set(className, true);
-      Tracer.observePrototype(exportTarget[className]);
+      Tracer.observePrototype(exportTarget[className], className);
     });
 
     return map;
@@ -1011,7 +1019,6 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { Tracer };
 }
-
 
 
 

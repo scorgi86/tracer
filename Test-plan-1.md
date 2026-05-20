@@ -1,38 +1,60 @@
-# Тест-план-1
+# Test-plan-1
 
-1. Базовые события вызовов функций  
-Проверить `createProxyFn` и `trace`: генерируются `beforeCallMethod`/`afterCallMethod`, корректны `eventType`, `place`, `fnKey`, `className`, `fullName`, `args`, `value`.
+## Цель
 
-2. Трассировка свойств (descriptor)  
-Проверить `observeProperty`: чтение дает `propertyGet`, запись дает `propertySet`, события содержат `propName`, `className`, текущий/новый value.
+Проверить корректность трассировки вызовов/свойств, жизненный цикл слайсов, профили производительности и устойчивость интеграции с редакторным кодом.
 
-3. Трассировка свойств (proxy) и вложенность  
-Проверить `observePropertyObject` и `observe`: доступ к `obj.a.b` и запись в глубину генерируют события с корректным `propPath`; вложенные объекты оборачиваются автоматически.
+## Основные проверки
 
-4. `observeAllProperties` и покрытие "всех наблюдаемых"  
-Проверить, что все нефункциональные поля наблюдаемы; функции не попадают в property-trace.
+1. События вызовов функций
+- `createProxyFn` генерирует `beforeCallMethod` и `afterCallMethod`.
+- payload содержит `eventType`, `place`, `fnKey`, `className`, `fullName`.
 
-5. `observeAll` и `observePrototypeAll`  
-Отдельно проверить входы как массив и как объект-словарь; убедиться, что методы реально оборачиваются и вызывают события.
+2. События свойств через descriptor
+- `observeProperty` генерирует `propertyGet/propertySet`.
+- payload содержит `propName`, `className`, ожидаемые `value/curValue`.
 
-6. Слайсы "От/До" (`defineSlice`)  
-Проверить сценарий start/stop: `beforeCall => true`, `afterCall => false`; `traceBySlice` получает события только при активном слайсе.
+3. Гибридный режим наблюдения объекта свойства
+- `observePropertyObject` по умолчанию работает без `Proxy`.
+- `Proxy` включается только явно (`useProxy: true`) и в допустимых кейсах.
 
-7. Последовательности слайсов (`traceBySliceSequence`)  
-Проверить, что callback вызывается только когда все слайсы из последовательности активны одновременно.
+4. Отсутствие авто-оборачивания свойств
+- `observe(...)` не оборачивает свойства объектов автоматически.
+- функции/методы продолжают трассироваться.
 
-8. Слайсы из функции/вызова и async  
-Проверить `defineSliceByFunction` и `defineSliceByCall` для sync/async/throw: состояние слайса корректно сбрасывается в `finally` и не "залипает".
+5. Глобальность ручных вотчеров свойств
+- вручную подписанные свойства видны через `traceProperties` и `traceAll` глобально.
 
-9. API подписок по типу событий  
-Проверить `traceCalls`, `traceProperties`, `untraceCalls`, `untraceProperties`: подписки точечно работают и корректно снимаются.
+6. Поведение профилей
+- `minimal/balanced/full` ведут себя по контракту.
+- подавление noisy-вызовов работает в `minimal/balanced`.
 
-10. Импорт/экспорт сценариев  
-Проверить `exportSliceScenarios`/`importSliceScenarios`: структура payload, восстановление конфигов, поведение `overwrite`/`activate`, корректный список `getRegisteredSlices`.
+7. Ручные property-подписки в non-full профилях
+- `traceProperties` получает события ручных вотчеров в `minimal/balanced`.
 
-11. Негативные кейсы и валидация  
-Проверить ошибки на пустые аргументы (`trace`, `traceBySlice`, `defineSliceByFunctionName`, `importSliceScenarios` с невалидным payload).
+8. Жизненный цикл слайсов
+- `defineSlice` корректно включает/выключает слайс.
+- `traceBySlice` и `traceBySliceOnce` работают только в активном слайсе.
 
-12. Изоляция и очистка состояния между тестами  
-В `beforeEach/afterEach` сбрасывать подписки (`untraceAll`, `untraceBySlice`, `disableSliceListeners`) и состояние `tracerState`, чтобы тесты не влияли друг на друга.
+9. Последовательности слайсов
+- `traceBySliceSequence` срабатывает только при активности всех целевых слайсов.
 
+10. Переносимость сценариев
+- `exportSliceScenarios/importSliceScenarios` сохраняют поведение слайсов.
+
+11. Batch-подписки
+- `traceAllBatched/traceCallsBatched/tracePropertiesBatched` корректно флешат пачки.
+- `untrace*` чистит regular и batched подписки.
+
+12. Отчеты по слайсам
+- `ReportSliceDiff` строит diff между вызовами.
+- `ReportSliceUsage` собирает usage только внутри слайса и дает diff между прогонами.
+
+13. Интеграционные регрессии
+- проверки против:
+- `Illegal invocation`
+- `Receiver must be an instance ...`
+- `... is not a function`
+
+14. Изоляция тестов
+- каждый тест очищает подписки, состояние профилей и состояние слайсов.
