@@ -65,17 +65,51 @@
 
 ## 2. Быстрый старт
 
-### 2.1 Установка
+### 2.1 Установка и подключение (`scorgi86/tracer`)
+
+#### Вариант A: Подключение напрямую из GitHub
+
+```bash
+npm i github:scorgi86/tracer
+```
+
+ESM:
 
 ```javascript
-// Импорт основных компонентов
-import { Tracer } from './tracer.js';
-import {
-  ReportUsage,
-  ReportTreeView,
-  ReportSimple,
-  ReportSliceDiff
-} from './reports/index.js';
+import { Tracer } from 'tracer';
+```
+
+CommonJS:
+
+```javascript
+const { Tracer } = require('tracer');
+```
+
+#### Вариант B: Локальная сборка из репозитория
+
+```bash
+git clone https://github.com/scorgi86/tracer.git
+cd tracer
+npm install
+npm run build
+```
+
+Подключение после сборки:
+
+```javascript
+// CommonJS
+const { Tracer } = require('./dist/tracer.cjs.js');
+
+// ESM
+// import { Tracer } from './dist/tracer.es.js';
+```
+
+#### Быстрая проверка, что подключение работает
+
+```javascript
+const tracedSum = Tracer.createProxyFn((a, b) => a + b, 'sum');
+Tracer.traceCalls((e) => console.log(e.type, e.fullName));
+tracedSum(1, 2);
 ```
 
 ### 2.2 Первая трассировка
