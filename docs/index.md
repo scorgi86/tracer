@@ -439,6 +439,34 @@ Tracer.traceBySlice('payment', (event) => {
 });
 ```
 
+#### Пример: определение слайса под конкретный бизнес-сценарий
+
+```javascript
+// Трассируем только процесс оплаты
+Tracer.defineSlice('checkout-payment', {
+  predicate: (event) =>
+    event.fullName.includes('CheckoutService') ||
+    event.fullName.includes('PaymentService'),
+  description: 'Только вызовы checkout/payment'
+});
+
+Tracer.enableSlice('checkout-payment');
+
+Tracer.traceBySlice('checkout-payment', (event) => {
+  console.log(`[slice:checkout-payment] ${event.type} ${event.fullName}`);
+});
+
+// ... выполняем сценарий оформления заказа ...
+// await checkoutService.placeOrder(order);
+
+Tracer.disableSlice('checkout-payment');
+```
+
+Что это дает:
+- в отчеты и консоль попадут только события, прошедшие `predicate`;
+- шум от остальных модулей не мешает анализу;
+- слайс можно быстро включать/выключать для локальной диагностики.
+
 #### \`Tracer.enableSlice(sliceName)\` / \`Tracer.disableSlice(sliceName)\`
 Включает/выключает слайс.
 
