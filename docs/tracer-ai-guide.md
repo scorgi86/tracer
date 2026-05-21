@@ -9,6 +9,8 @@ layout: default
 
 ---
 
+> Источник истины по API Tracer: [docs/index.md](./index.md). Этот документ описывает AI-паттерны поверх актуального API.
+
 ## Оглавление
 
 1. [Введение: AI + Tracer](#1-введение-ai--tracer)
