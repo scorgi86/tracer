@@ -1,51 +1,16 @@
 {
-  "name": "tracer",
-  "version": "1.0.0",
-  "type": "commonjs",
-  "main": "./dist/tracer.cjs.js",
-  "module": "./dist/tracer.es.js",
-  "types": "./dist/types/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/tracer.es.js",
-      "require": "./dist/tracer.cjs.js",
-      "types": "./dist/types/index.d.ts"
-    }
-  },
-  "files": [
-    "dist",
-    "src",
-    "types"
+  "name": "tracer-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:types": "tsc --emitDeclarationOnly",
-    "lint": "eslint ./src",
-    "prepublishOnly": "npm run build",
-    "pretest": "npm run build",
-    "test": "jest",
-    "test:docs-examples": "jest __tests__/docs-examples.test.js --runInBand",
-    "test:coverage": "jest --coverage",
-    "perf:guard": "node scripts/perf-guard.js",
-    "perf:baseline": "node scripts/perf-guard.js --write-baseline",
-    "profile:check": "node scripts/runtime-profile-check.js",
-    "errors:scan": "node scripts/error-fingerprint-check.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "devDependencies": {
-    "@eslint/js": "^9.39.2",
-    "@eslint/json": "^0.14.0",
-    "@eslint/markdown": "^7.5.1",
-    "eslint": "^9.39.2",
-    "eslint-plugin-json": "^4.0.1",
-    "globals": "^17.1.0",
-    "jest": "^30.3.0",
-    "vite": "^8.0.1",
-    "vite-plugin-dts": "^4.5.4",
-    "zone.js": "^0.15.1"
+    "build": "npm run -ws --if-present build",
+    "test": "npm run -ws --if-present test",
+    "lint": "npm run -ws --if-present lint",
+    "build:tracer": "npm run -w tracer build",
+    "build:plugin": "npm run -w webpack-tracer-plugin --if-present build",
+    "test:tracer": "npm run -w tracer test",
+    "test:plugin": "npm run -w webpack-tracer-plugin test -- --runInBand"
   }
 }

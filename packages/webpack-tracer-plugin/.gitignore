@@ -1,0 +1,24 @@
+# Зависимости
+node_modules/
+
+# Сборка
+dist/
+build/
+.next/
+.nuxt/
+
+# Окружение
+.env
+.env.local
+
+# Логи
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Операционные системы
+.DS_Store
+Thumbs.db
