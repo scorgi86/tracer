@@ -2,6 +2,7 @@ const SWCInjectLoader = require("./SWCInjectLoader");
 
 const loaderCache = new Map();
 const TARGET_CALLBACKS_KEY = "__WEBPACK_TRACER_TARGET_CALLBACKS__";
+const TRACER_LOADER_METRICS_KEY = "__WEBPACK_TRACER_LOADER_METRICS__";
 const buildTargetsCallback = (source) => {
     if (!source || typeof source !== "string") {
         return null;
@@ -90,6 +91,7 @@ const normalizeOptions = (options) => ({
 module.exports = function(source) {
     const callback = this.async();
     const resourcePath = this.resourcePath;
+    const startedAt = Date.now();
     
     this.cacheable(true);
     
@@ -109,9 +111,22 @@ module.exports = function(source) {
     
     loader.processCode(source, resourcePath)
         .then(result => {
+            const metrics = globalThis[TRACER_LOADER_METRICS_KEY];
+            if (metrics) {
+                metrics.visitedFiles = (metrics.visitedFiles || 0) + 1;
+                metrics.totalMs = (metrics.totalMs || 0) + (Date.now() - startedAt);
+                if (result !== source) {
+                    metrics.transformedFiles = (metrics.transformedFiles || 0) + 1;
+                }
+            }
             callback(null, result);
         })
         .catch(error => {
+            const metrics = globalThis[TRACER_LOADER_METRICS_KEY];
+            if (metrics) {
+                metrics.visitedFiles = (metrics.visitedFiles || 0) + 1;
+                metrics.totalMs = (metrics.totalMs || 0) + (Date.now() - startedAt);
+            }
             if (normalized.fallbackOnError) {
                 console.error(`SWC loader error in ${resourcePath}, returning original source:`, error);
                 callback(null, source);

@@ -36,8 +36,29 @@ module.exports = class SWCInjectLoader {
         const generateCodeSig = opts.generateCode?.construct
             ? opts.generateCode.construct.toString()
             : '';
+        const generateAfterClassSig = opts.generateCode?.afterClass
+            ? opts.generateCode.afterClass.toString()
+            : '';
+        const generateAfterPrototypeMethodSig = opts.generateCode?.afterPrototypeMethod
+            ? opts.generateCode.afterPrototypeMethod.toString()
+            : '';
+        const generateAfterAllSig = opts.generateCode?.afterAll
+            ? opts.generateCode.afterAll.toString()
+            : '';
+        const generateBeforeEndIIFESig = opts.generateCode?.beforeEndIIFE
+            ? opts.generateCode.beforeEndIIFE.toString()
+            : '';
 
-        return JSON.stringify({ targets, classConfig, flags, generateCodeSig });
+        return JSON.stringify({
+            targets,
+            classConfig,
+            flags,
+            generateCodeSig,
+            generateAfterClassSig,
+            generateAfterPrototypeMethodSig,
+            generateAfterAllSig,
+            generateBeforeEndIIFESig
+        });
     }
 
     buildCacheKey(sourceCode, filePath) {
@@ -51,6 +72,10 @@ module.exports = class SWCInjectLoader {
 
     buildTargetScanRegex(targets) {
         if (!targets || typeof targets === 'function' || targets.size === 0) return null;
+        const hasComplexTargetNames = Array.from(targets).some((target) => /[.\[\]'"]/.test(target));
+        if (hasComplexTargetNames) {
+            return null;
+        }
         const escaped = Array.from(targets).map(t => t.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'));
         return escaped.length ? new RegExp(`\\b(${escaped.join('|')})\\b`) : null;
     }
@@ -90,20 +115,139 @@ module.exports = class SWCInjectLoader {
         return this._options.insertPosition === 'start';
     }
 
-    getObserverStatements(name, generateCodeFn) {
-        if (this.observerStatementsCache.has(name)) {
-            return this.observerStatementsCache.get(name);
+    getObserverStatements(name, generateCodeFn, extraArgs = {}) {
+        const hasInstanceMethodsOnThis = extraArgs.hasInstanceMethodsOnThis === true ? 1 : 0;
+        const cacheKey = `construct:${name}:${hasInstanceMethodsOnThis}`;
+        if (this.observerStatementsCache.has(cacheKey)) {
+            return this.observerStatementsCache.get(cacheKey);
         }
 
-        const code = generateCodeFn({ className: name });
+        const code = generateCodeFn({ className: name, ...extraArgs });
+        if (this.isUnsafeTracerCode(code)) {
+            this.observerStatementsCache.set(cacheKey, []);
+            if (this.debug) {
+                console.warn("[TRACER] skip unsafe generated construct code:", code);
+            }
+            return [];
+        }
         if (!code || code.trim() === '') {
-            this.observerStatementsCache.set(name, []);
+            this.observerStatementsCache.set(cacheKey, []);
             return [];
         }
 
-        const stmts = this.parseCodeToStatements(code);
-        this.observerStatementsCache.set(name, stmts);
+        const stmts = this.parseCodeToStatements(`${this.getTracerFacadeCode()}\n${code}`);
+        this.observerStatementsCache.set(cacheKey, stmts);
         return stmts;
+    }
+
+    getHookStatements(cacheKey, generateCodeFn, args) {
+        if (typeof generateCodeFn !== 'function') {
+            return [];
+        }
+
+        if (this.observerStatementsCache.has(cacheKey)) {
+            return this.observerStatementsCache.get(cacheKey);
+        }
+
+        const code = generateCodeFn(args || {});
+        if (this.isUnsafeTracerCode(code)) {
+            this.observerStatementsCache.set(cacheKey, []);
+            if (this.debug) {
+                console.warn("[TRACER] skip unsafe generated hook code:", code);
+            }
+            return [];
+        }
+        if (!code || code.trim() === '') {
+            this.observerStatementsCache.set(cacheKey, []);
+            return [];
+        }
+
+        const stmts = this.parseCodeToStatements(`${this.getTracerFacadeCode()}\n${code}`);
+        this.observerStatementsCache.set(cacheKey, stmts);
+        return stmts;
+    }
+
+    getTracerFacadeCode() {
+        return `
+(() => {
+  const g = typeof globalThis !== "undefined"
+    ? globalThis
+    : (typeof window !== "undefined" ? window : undefined);
+  if (!g) return;
+
+  if (g.Tracer && g.Tracer.__isTracerFacade !== true) {
+    return;
+  }
+
+  const pendingKey = "__WEBPACK_TRACER_PENDING_CALLS__";
+  g[pendingKey] = Array.isArray(g[pendingKey]) ? g[pendingKey] : [];
+
+  if (g.Tracer && g.Tracer.__isTracerFacade === true) {
+    return;
+  }
+
+  const facade = new Proxy({ __isTracerFacade: true }, {
+    get(target, prop) {
+      if (prop === "__isTracerFacade") return true;
+      return function(...args) {
+        const runtime = g.__WEBPACK_TRACER_RUNTIME_INSTANCE__;
+        const tracer = runtime && runtime.__isTracerFacade !== true ? runtime : null;
+        if (tracer && typeof tracer[prop] === "function") {
+          return tracer[prop](...args);
+        }
+        g[pendingKey].push([prop, args]);
+        return undefined;
+      };
+    },
+  });
+
+  g.Tracer = facade;
+  if (typeof window !== "undefined") {
+    window.Tracer = facade;
+  }
+})();
+        `.trim();
+    }
+
+    isUnsafeTracerCode(code) {
+        if (!code || typeof code !== "string") {
+            return false;
+        }
+        return /(?:window\.)?Tracer\.(?:observePrototype|observe|observeConstructor)\(\s*(?:undefined\b|null\b|["']undefined["'])/.test(code);
+    }
+
+    hasThisFunctionAssignment(node) {
+        if (!node || typeof node !== "object") {
+            return false;
+        }
+
+        const isFunctionLike = (valueNode) =>
+            valueNode &&
+            (valueNode.type === "FunctionExpression" || valueNode.type === "ArrowFunctionExpression");
+
+        const statements = Array.isArray(node?.stmts)
+            ? node.stmts
+            : Array.isArray(node?.body?.stmts)
+                ? node.body.stmts
+                : null;
+
+        if (!statements) {
+            return false;
+        }
+
+        for (let i = 0; i < statements.length; i += 1) {
+            const stmt = statements[i];
+            if (stmt?.type !== "ExpressionStatement" || stmt.expression?.type !== "AssignmentExpression") {
+                continue;
+            }
+            const left = stmt.expression.left;
+            const right = stmt.expression.right;
+            if (left?.type === "MemberExpression" && left.object?.type === "ThisExpression" && isFunctionLike(right)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     buildPatchedClassInfoCode(className) {
@@ -217,18 +361,6 @@ module.exports = class SWCInjectLoader {
      */
     processClassSafe(classNode, className, generateCodeFn) {
         try {
-            const observerCode = generateCodeFn({ className });
-            if (!observerCode || observerCode.trim() === '') {
-                return false;
-            }
-
-            const observerStatements = this.getObserverStatements(className, generateCodeFn);
-            if (!observerStatements.length) {
-                return false;
-            }
-            const patchInfoStatements = this.getPatchedClassInfoStatements(className);
-            
-            // Проверяем структуру класса
             if (!classNode.body || !Array.isArray(classNode.body)) {
                 return false;
             }
@@ -249,6 +381,14 @@ module.exports = class SWCInjectLoader {
             if (constructorNode) {
                 // Добавляем в существующий конструктор
                 if (constructorNode.body?.stmts && Array.isArray(constructorNode.body.stmts)) {
+                    const hasInstanceMethodsOnThis = this.hasThisFunctionAssignment(constructorNode.body);
+                    const observerStatements = this.getObserverStatements(className, generateCodeFn, {
+                        hasInstanceMethodsOnThis,
+                    });
+                    if (!observerStatements.length) {
+                        return false;
+                    }
+                    const patchInfoStatements = this.getPatchedClassInfoStatements(className);
                     const insertStatements = [...observerStatements, ...patchInfoStatements];
                     if (this.isInsertStart()) {
                         constructorNode.body.stmts.unshift(...insertStatements);
@@ -258,7 +398,11 @@ module.exports = class SWCInjectLoader {
                     return true;
                 }
             } else {
-                // Создаем новый конструктор
+                // ?????????????? ?????????? ??????????????????????
+                const observerCode = generateCodeFn({ className, hasInstanceMethodsOnThis: false });
+                if (!observerCode || observerCode.trim() === '') {
+                    return false;
+                }
                 const hasSuper = !!classNode.superClass;
                 const newConstructor = this.createConstructorWithObservers(
                     className,
@@ -288,7 +432,10 @@ module.exports = class SWCInjectLoader {
      */
     processFunctionSafe(functionNode, functionName, generateCodeFn) {
         try {
-            const observerStatements = this.getObserverStatements(functionName, generateCodeFn);
+            const hasInstanceMethodsOnThis = this.hasThisFunctionAssignment(functionNode.body);
+            const observerStatements = this.getObserverStatements(functionName, generateCodeFn, {
+                hasInstanceMethodsOnThis,
+            });
             if (!observerStatements.length) {
                 return false;
             }
@@ -317,6 +464,223 @@ module.exports = class SWCInjectLoader {
         }
     }
 
+    getPrototypeAssignmentInfo(node) {
+        if (!node || node.type !== "ExpressionStatement") {
+            return null;
+        }
+        const expression = node.expression;
+        if (!expression || expression.type !== "AssignmentExpression") {
+            return null;
+        }
+
+        const left = expression.left;
+        if (!left || left.type !== "MemberExpression") {
+            return null;
+        }
+
+        const extractPropertyName = (propNode) => {
+            if (!propNode) {
+                return null;
+            }
+            if (propNode.type === "Computed") {
+                return extractPropertyName(propNode.expression);
+            }
+            if (propNode.type === "Identifier") {
+                return propNode.value;
+            }
+            if (propNode.type === "StringLiteral") {
+                return propNode.value;
+            }
+            if (propNode.type === "NumericLiteral") {
+                return String(propNode.value);
+            }
+            return null;
+        };
+
+        const extractTargetNameFromObject = (objectNode) => {
+            if (!objectNode) {
+                return null;
+            }
+            if (objectNode.type === "Identifier") {
+                return objectNode.value;
+            }
+            if (objectNode.type === "ThisExpression") {
+                return "this";
+            }
+            if (objectNode.type === "MemberExpression") {
+                const objectName = extractTargetNameFromObject(objectNode.object);
+                const propertyName = extractPropertyName(objectNode.property);
+                if (!objectName || !propertyName) {
+                    return null;
+                }
+                return `${objectName}.${propertyName}`;
+            }
+            return null;
+        };
+
+        let className = null;
+        let methodName = null;
+
+        const objectExpr = left.object;
+        if (!objectExpr) {
+            return null;
+        }
+
+        // Case 1: ClassName.prototype.method = ...
+        if (objectExpr.type === "MemberExpression") {
+            const classIdent = objectExpr.object;
+            const protoProp = objectExpr.property;
+            if (!protoProp || protoProp.type !== "Identifier" || protoProp.value !== "prototype") {
+                return null;
+            }
+            className = extractTargetNameFromObject(classIdent);
+            if (!className) {
+                return null;
+            }
+            methodName = extractPropertyName(left.property);
+        }
+
+        // Case 2: ClassName.prototype = { ... }
+        if (objectExpr.type === "Identifier") {
+            const leftProp = left.property;
+            const leftPropName = extractPropertyName(leftProp);
+            if (leftPropName !== "prototype") {
+                return null;
+            }
+            className = objectExpr.value;
+            methodName = "prototype";
+        }
+
+        if (!className) {
+            return null;
+        }
+
+        // Support `ClassName.prototype = { ... }` style:
+        // use the last property key as the "last prototype method/property" anchor.
+        if (
+            methodName === "prototype" &&
+            expression.right &&
+            expression.right.type === "ObjectExpression" &&
+            Array.isArray(expression.right.properties) &&
+            expression.right.properties.length > 0
+        ) {
+            const ownProps = expression.right.properties.filter((prop) => prop && prop.type === "KeyValueProperty");
+            const lastProp = ownProps[ownProps.length - 1];
+            const objectPrototypeLastKey = extractPropertyName(lastProp?.key);
+            methodName = objectPrototypeLastKey || "__prototype_object__";
+        }
+
+        if (!methodName) {
+            return null;
+        }
+
+        return {
+            className,
+            methodName
+        };
+    }
+
+    findTopLevelIIFE(astBody) {
+        if (!Array.isArray(astBody)) {
+            return null;
+        }
+
+        for (let i = 0; i < astBody.length; i += 1) {
+            const stmt = astBody[i];
+            if (!stmt || stmt.type !== "ExpressionStatement") {
+                continue;
+            }
+            const expr = stmt.expression;
+            if (!expr || expr.type !== "CallExpression") {
+                continue;
+            }
+            const callee = expr.callee;
+            if (!callee) {
+                continue;
+            }
+
+            if (callee.type === "FunctionExpression" && callee.body?.type === "BlockStatement" && Array.isArray(callee.body.stmts)) {
+                return { statementIndex: i, body: callee.body.stmts };
+            }
+            if (callee.type === "ArrowFunctionExpression" && callee.body?.type === "BlockStatement" && Array.isArray(callee.body.stmts)) {
+                return { statementIndex: i, body: callee.body.stmts };
+            }
+            if (callee.type === "ParenthesisExpression") {
+                const nested = callee.expression;
+                if (nested?.type === "FunctionExpression" && nested.body?.type === "BlockStatement" && Array.isArray(nested.body.stmts)) {
+                    return { statementIndex: i, body: nested.body.stmts };
+                }
+                if (nested?.type === "ArrowFunctionExpression" && nested.body?.type === "BlockStatement" && Array.isArray(nested.body.stmts)) {
+                    return { statementIndex: i, body: nested.body.stmts };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    findBeforeEndIndex(statements) {
+        if (!Array.isArray(statements) || statements.length === 0) {
+            return 0;
+        }
+        for (let i = statements.length - 1; i >= 0; i -= 1) {
+            if (statements[i]?.type === "ReturnStatement") {
+                return i;
+            }
+        }
+        return statements.length;
+    }
+
+    collectModuleSymbolsFromStatements(statements) {
+        const classes = new Set();
+        const functions = new Set();
+        const constructors = new Set();
+        const prototypeOwners = new Set();
+
+        if (!Array.isArray(statements)) {
+            return {
+                classes: [],
+                functions: [],
+                constructors: [],
+                prototypeOwners: [],
+            };
+        }
+
+        for (let i = 0; i < statements.length; i += 1) {
+            const node = statements[i];
+            if (!node || typeof node !== "object") {
+                continue;
+            }
+
+            if (node.type === "ClassDeclaration" && node.identifier?.value) {
+                const className = node.identifier.value;
+                classes.add(className);
+                constructors.add(className);
+            }
+
+            if (node.type === "FunctionDeclaration" && node.identifier?.value) {
+                const fnName = node.identifier.value;
+                functions.add(fnName);
+                if (/^[A-Z]/.test(fnName)) {
+                    constructors.add(fnName);
+                }
+            }
+
+            const protoInfo = this.getPrototypeAssignmentInfo(node);
+            if (protoInfo) {
+                prototypeOwners.add(protoInfo.className);
+                constructors.add(protoInfo.className);
+            }
+        }
+
+        return {
+            classes: Array.from(classes).sort(),
+            functions: Array.from(functions).sort(),
+            constructors: Array.from(constructors).sort(),
+            prototypeOwners: Array.from(prototypeOwners).sort(),
+        };
+    }
+
     /**
      * Основной метод обработки через AST с visitor pattern
      */
@@ -337,70 +701,233 @@ module.exports = class SWCInjectLoader {
                 comments: true
             });
             
+            const needConstructHook = typeof generateCode.construct === "function";
+            const needAfterClassHook = typeof generateCode.afterClass === "function";
+            const needAfterPrototypeHook = typeof generateCode.afterPrototypeMethod === "function";
+            const needAfterAllHook = typeof generateCode.afterAll === "function";
+            const needBeforeEndIIFEHook = typeof generateCode.beforeEndIIFE === "function";
+            const needModuleLevelHooks = needAfterAllHook || needBeforeEndIIFEHook;
+            const needModuleSymbols = needModuleLevelHooks;
+
             let modified = false;
-            
-            // Рекурсивно обходим AST
-            const traverse = (node) => {
-                if (!node || typeof node !== 'object') return;
-                
-                // Обработка ClassDeclaration
-                if (node.type === 'ClassDeclaration' && 
-                    node.identifier && 
-                    this.shouldTraceTarget(node.identifier.value)) {
-                    
+            const bodyInsertions = [];
+            const lastPrototypeMethodByContainer = new Map();
+
+            const ensurePrototypeContainerMap = (container) => {
+                if (!lastPrototypeMethodByContainer.has(container)) {
+                    lastPrototypeMethodByContainer.set(container, new Map());
+                }
+                return lastPrototypeMethodByContainer.get(container);
+            };
+
+            const visitNode = (node) => {
+                if (!node || typeof node !== "object") return;
+
+                if (
+                    node.type === "ClassDeclaration" &&
+                    node.identifier &&
+                    this.shouldTraceTarget(node.identifier.value) &&
+                    needConstructHook
+                ) {
                     const className = node.identifier.value;
                     if (this.processClassSafe(node, className, generateCode.construct)) {
                         modified = true;
                     }
-                }
-                
-                // Обработка FunctionDeclaration
-                else if (node.type === 'FunctionDeclaration' && 
-                         node.identifier && 
-                         this.shouldTraceTarget(node.identifier.value)) {
-                    
+                } else if (
+                    node.type === "FunctionDeclaration" &&
+                    node.identifier &&
+                    this.shouldTraceTarget(node.identifier.value) &&
+                    needConstructHook
+                ) {
+                    const functionName = node.identifier.value;
+                    if (this.processFunctionSafe(node, functionName, generateCode.construct)) {
+                        modified = true;
+                    }
+                } else if (
+                    node.type === "ClassExpression" &&
+                    node.identifier &&
+                    this.shouldTraceTarget(node.identifier.value) &&
+                    needConstructHook
+                ) {
+                    const className = node.identifier.value;
+                    if (this.processClassSafe(node, className, generateCode.construct)) {
+                        modified = true;
+                    }
+                } else if (
+                    node.type === "FunctionExpression" &&
+                    node.identifier &&
+                    this.shouldTraceTarget(node.identifier.value) &&
+                    needConstructHook
+                ) {
                     const functionName = node.identifier.value;
                     if (this.processFunctionSafe(node, functionName, generateCode.construct)) {
                         modified = true;
                     }
                 }
-                
-                // Обработка ClassExpression
-                else if (node.type === 'ClassExpression' && 
-                         node.identifier && 
-                         this.shouldTraceTarget(node.identifier.value)) {
-                    
-                    const className = node.identifier.value;
-                    if (this.processClassSafe(node, className, generateCode.construct)) {
-                        modified = true;
-                    }
-                }
-                
-                // Обработка FunctionExpression
-                else if (node.type === 'FunctionExpression' && 
-                         node.identifier && 
-                         this.shouldTraceTarget(node.identifier.value)) {
-                    
-                    const functionName = node.identifier.value;
-                    if (this.processFunctionSafe(node, functionName, generateCode.construct)) {
-                        modified = true;
-                    }
-                }
-                
-                // Рекурсивный обход дочерних узлов
+            };
+
+            const walkNode = (node) => {
+                if (!node || typeof node !== "object") return;
                 for (const key in node) {
-                    if (node[key] && typeof node[key] === 'object') {
-                        if (Array.isArray(node[key])) {
-                            node[key].forEach(traverse);
+                    if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+                    const child = node[key];
+                    if (!child || typeof child !== "object") continue;
+                    if (Array.isArray(child)) {
+                        walkArray(child);
+                    } else {
+                        walkNode(child);
+                    }
+                }
+            };
+
+            const walkArray = (arr) => {
+                if (!Array.isArray(arr)) return;
+
+                for (let i = 0; i < arr.length; i += 1) {
+                    const node = arr[i];
+                    if (!node || typeof node !== "object") continue;
+
+                    visitNode(node);
+
+                    if (
+                        needAfterClassHook &&
+                        node.type === "ClassDeclaration" &&
+                        node.identifier
+                    ) {
+                        const className = node.identifier.value;
+                        if (this.shouldTraceTarget(className)) {
+                            const statements = this.getHookStatements(
+                                'afterClass:' + className,
+                                generateCode.afterClass,
+                                { className }
+                            );
+                            if (statements.length) {
+                                bodyInsertions.push({ container: arr, index: i + 1, statements });
+                            }
+                        }
+                    }
+
+                    if (needAfterPrototypeHook) {
+                        const protoInfo = this.getPrototypeAssignmentInfo(node);
+                        if (protoInfo && this.shouldTraceTarget(protoInfo.className)) {
+                            const byClass = ensurePrototypeContainerMap(arr);
+                            byClass.set(protoInfo.className, {
+                                index: i,
+                                methodName: protoInfo.methodName
+                            });
+                        }
+                    }
+
+                    for (const key in node) {
+                        if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+                        const child = node[key];
+                        if (!child || typeof child !== "object") continue;
+                        if (Array.isArray(child)) {
+                            walkArray(child);
                         } else {
-                            traverse(node[key]);
+                            walkNode(child);
                         }
                     }
                 }
             };
-            
-            traverse(ast);
-            
+
+            if (needConstructHook || needAfterClassHook || needAfterPrototypeHook) {
+                walkNode(ast);
+            }
+
+            if (needAfterPrototypeHook) {
+                for (const [container, byClass] of lastPrototypeMethodByContainer.entries()) {
+                    for (const [className, info] of byClass.entries()) {
+                        const statements = this.getHookStatements(
+                            'afterPrototypeMethod:' + className + ':' + info.methodName,
+                            generateCode.afterPrototypeMethod,
+                            { className, methodName: info.methodName }
+                        );
+                        if (statements.length) {
+                            bodyInsertions.push({ container, index: info.index + 1, statements });
+                        }
+                    }
+                }
+            }
+
+            if (bodyInsertions.length) {
+                const grouped = new Map();
+                bodyInsertions.forEach((insertion) => {
+                    const key = insertion.container;
+                    if (!grouped.has(key)) {
+                        grouped.set(key, []);
+                    }
+                    grouped.get(key).push(insertion);
+                });
+
+                for (const [container, insertions] of grouped.entries()) {
+                    insertions
+                        .sort((a, b) => b.index - a.index)
+                        .forEach((insertion) => {
+                            container.splice(insertion.index, 0, ...insertion.statements);
+                            modified = true;
+                        });
+                }
+            }
+
+            if (needModuleLevelHooks) {
+                const topLevelIIFE = this.findTopLevelIIFE(ast.body);
+
+                if (topLevelIIFE && needBeforeEndIIFEHook) {
+                    const moduleSymbols = needModuleSymbols
+                        ? this.collectModuleSymbolsFromStatements(topLevelIIFE.body)
+                        : null;
+                    const moduleContext = {
+                        filePath,
+                        moduleSymbols,
+                    };
+                    const insertIndex = this.findBeforeEndIndex(topLevelIIFE.body);
+                    const moduleKeySuffix = [
+                        filePath || "",
+                        (moduleSymbols?.constructors || []).join("|"),
+                        (moduleSymbols?.classes || []).join("|"),
+                        (moduleSymbols?.functions || []).join("|"),
+                    ].join("::");
+                    const statements = this.getHookStatements(
+                        `beforeEndIIFE:module:${moduleKeySuffix}`,
+                        generateCode.beforeEndIIFE,
+                        {
+                            ...moduleContext,
+                            hasIIFE: true,
+                        }
+                    );
+                    if (statements.length) {
+                        topLevelIIFE.body.splice(insertIndex, 0, ...statements);
+                        modified = true;
+                    }
+                } else if (!topLevelIIFE && needAfterAllHook) {
+                    const moduleSymbols = needModuleSymbols
+                        ? this.collectModuleSymbolsFromStatements(ast.body)
+                        : null;
+                    const moduleContext = {
+                        filePath,
+                        moduleSymbols,
+                    };
+                    const moduleKeySuffix = [
+                        filePath || "",
+                        (moduleSymbols?.constructors || []).join("|"),
+                        (moduleSymbols?.classes || []).join("|"),
+                        (moduleSymbols?.functions || []).join("|"),
+                    ].join("::");
+                    const statements = this.getHookStatements(
+                        `afterAll:module:${moduleKeySuffix}`,
+                        generateCode.afterAll,
+                        {
+                            ...moduleContext,
+                            hasIIFE: false,
+                        }
+                    );
+                    if (statements.length && Array.isArray(ast.body)) {
+                        ast.body.push(...statements);
+                        modified = true;
+                    }
+                }
+            }
             if (!modified) {
                 return sourceCode;
             }
@@ -514,7 +1041,11 @@ module.exports = class SWCInjectLoader {
 
         if (!sourceCode || typeof sourceCode !== 'string' || 
             noTargets || 
-            !generateCode?.construct || typeof generateCode.construct !== 'function') {            return sourceCode;
+            (typeof generateCode?.construct !== 'function' &&
+             typeof generateCode?.afterClass !== 'function' &&
+             typeof generateCode?.afterPrototypeMethod !== 'function' &&
+             typeof generateCode?.afterAll !== 'function' &&
+             typeof generateCode?.beforeEndIIFE !== 'function')) {            return sourceCode;
         }
 
         if (this._targetScanRegex && !this._targetScanRegex.test(sourceCode)) {

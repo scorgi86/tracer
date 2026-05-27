@@ -4,6 +4,8 @@
 
 Основной сценарий: добавить `Tracer.observeProperty(...)` (или любой другой код) в конструкторы выбранных классов без ручного редактирования исходников.
 
+Важно: плагин теперь явно подключает пакет `tracer` автоматически и делает это первым entry-скриптом (`ENTRY_ORDER.First`), чтобы `globalThis.Tracer` был доступен до остальных инъекций.
+
 ## Как подключить
 
 1. Установите зависимости:
@@ -53,6 +55,8 @@ module.exports = {
 
 ```js
 new UniversalCodeInjectorPlugin({
+  // по умолчанию true: подключает tracer первым скриптом
+  injectTracerRuntimeFirst: true,
   injectLoaderOpts: {
     targets: ['UserService', 'PaymentService'],
     generateCode: {
@@ -64,6 +68,15 @@ new UniversalCodeInjectorPlugin({
       }
     }
   }
+});
+```
+
+Если в проекте нужен полностью ручной контроль подключения runtime, можно отключить авто-инъекцию:
+
+```js
+new UniversalCodeInjectorPlugin({
+  injectTracerRuntimeFirst: false,
+  injectLoaderOpts: { ... }
 });
 ```
 

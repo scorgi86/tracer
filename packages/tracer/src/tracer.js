@@ -1071,11 +1071,6 @@ if (typeof window !== 'undefined') {
   window.Tracer = Tracer;
 }
 
-// Добавить поддержку module.exports для Node.js
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { Tracer };
-}
-
 
 
 

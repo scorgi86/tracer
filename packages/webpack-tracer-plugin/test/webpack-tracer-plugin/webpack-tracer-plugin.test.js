@@ -135,6 +135,13 @@ describe('InjectConstructorCodePlugin', () => {
     expect(newCode.indexOf('window.page = this;') > -1).toBe(true);
   });
 
+  test('injects tracer runtime bootstrap', () => {
+    const newCode = fs.readFileSync(outputFile, 'utf8');
+    expect(newCode.includes('__WEBPACK_TRACER_RUNTIME_BOOTSTRAP__')).toBe(true);
+    expect(newCode.includes('__WEBPACK_TRACER_RUNTIME_BOOTSTRAPPED__')).toBe(true);
+    expect(newCode.includes('__WEBPACK_TRACER_RUNTIME_INSTANCE__')).toBe(true);
+  });
+
   // test('asc_docs_api добавляет ссылку на себя в window.api', () => {
   //   const newCode = fs.readFileSync(outputFile, 'utf8');
   //   expect(newCode.indexOf('window.api = this;') > -1).toBe(true);

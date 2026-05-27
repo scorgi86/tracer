@@ -3,7 +3,7 @@
     "allowJs": true,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "outDir": "./dist",
+    "outDir": "./dist/types",
     "rootDir": "./src",
   },
   "include": ["./src/**/*.js"]
