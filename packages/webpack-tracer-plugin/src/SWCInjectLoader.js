@@ -2,6 +2,8 @@
 const swc = require('@swc/core');
 const path = require('path');
 const crypto = require('node:crypto');
+const pluginPkg = require("../package.json");
+const swcPkg = require("@swc/core/package.json");
 
 module.exports = class SWCInjectLoader {
     constructor(opts = {}) {
@@ -22,15 +24,20 @@ module.exports = class SWCInjectLoader {
     }
 
     buildOptionsHash(opts) {
+        const pluginVersion = pluginPkg && pluginPkg.version ? pluginPkg.version : "unknown";
+        const swcVersion = swcPkg && swcPkg.version ? swcPkg.version : "unknown";
         const targets = typeof opts.targets === 'function'
-            ? `fn:${opts.targets.toString()}`
+            ? `fn:${opts.targetsCallbackKey || opts.targets.toString()}`
             : Array.from(opts.targets || []).sort();
         const classConfig = Array.from((opts.classConfig || new Map()).entries())
             .sort(([a], [b]) => a.localeCompare(b));
         const flags = {
             trackPrototypes: opts.trackPrototypes !== false,
             trackInheritance: opts.trackInheritance !== false,
-            debug: !!opts.debug
+            debug: !!opts.debug,
+            allowTargetsCallbackInDebug: opts.allowTargetsCallbackInDebug === true,
+            targetsCallbackEnabled: opts.targetsCallbackEnabled === true,
+            disableProcessCache: opts.disableProcessCache === true,
         };
 
         const generateCodeSig = opts.generateCode?.construct
@@ -50,6 +57,8 @@ module.exports = class SWCInjectLoader {
             : '';
 
         return JSON.stringify({
+            pluginVersion,
+            swcVersion,
             targets,
             classConfig,
             flags,
@@ -57,7 +66,14 @@ module.exports = class SWCInjectLoader {
             generateAfterClassSig,
             generateAfterPrototypeMethodSig,
             generateAfterAllSig,
-            generateBeforeEndIIFESig
+            generateBeforeEndIIFESig,
+            fileSignatureHooks: [
+                "construct",
+                "afterClass",
+                "afterPrototypeMethod",
+                "afterAll",
+                "beforeEndIIFE",
+            ].filter((hookName) => typeof opts.generateCode?.[hookName] === "function"),
         });
     }
 
@@ -684,6 +700,77 @@ module.exports = class SWCInjectLoader {
     /**
      * Основной метод обработки через AST с visitor pattern
      */
+
+    collectTopLevelTargetCandidatesFromStatements(statements, candidates) {
+        if (!Array.isArray(statements)) {
+            return;
+        }
+
+        for (let i = 0; i < statements.length; i += 1) {
+            const node = statements[i];
+            if (!node || typeof node !== "object") {
+                continue;
+            }
+
+            if (node.type === "ClassDeclaration" && node.identifier?.value) {
+                candidates.add(node.identifier.value);
+            }
+
+            if (node.type === "FunctionDeclaration" && node.identifier?.value) {
+                candidates.add(node.identifier.value);
+            }
+
+            if (node.type === "VariableDeclaration" && Array.isArray(node.declarations)) {
+                for (let j = 0; j < node.declarations.length; j += 1) {
+                    const decl = node.declarations[j];
+                    if (!decl || decl.type !== "VariableDeclarator") {
+                        continue;
+                    }
+                    const varName = decl.id?.type === "Identifier" ? decl.id.value : null;
+                    const init = decl.init;
+                    if (!varName || !init) {
+                        continue;
+                    }
+                    if (
+                        init.type === "ClassExpression" ||
+                        init.type === "FunctionExpression" ||
+                        init.type === "ArrowFunctionExpression"
+                    ) {
+                        candidates.add(varName);
+                    }
+                }
+            }
+
+            const protoInfo = this.getPrototypeAssignmentInfo(node);
+            if (protoInfo?.className) {
+                candidates.add(protoInfo.className);
+            }
+        }
+    }
+
+    collectTopLevelTargetCandidates(astBody) {
+        const candidates = new Set();
+        this.collectTopLevelTargetCandidatesFromStatements(astBody, candidates);
+
+        const topLevelIIFE = this.findTopLevelIIFE(astBody);
+        if (topLevelIIFE?.body) {
+            this.collectTopLevelTargetCandidatesFromStatements(topLevelIIFE.body, candidates);
+        }
+
+        return candidates;
+    }
+
+    hasTopLevelTargetMatch(candidates) {
+        if (!candidates || candidates.size === 0) {
+            return false;
+        }
+        for (const candidate of candidates) {
+            if (this.shouldTraceTarget(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
     async processWithAST(sourceCode, filePath, targets, generateCode) {
         try {
             const ext = path.extname(filePath);
@@ -708,10 +795,26 @@ module.exports = class SWCInjectLoader {
             const needBeforeEndIIFEHook = typeof generateCode.beforeEndIIFE === "function";
             const needModuleLevelHooks = needAfterAllHook || needBeforeEndIIFEHook;
             const needModuleSymbols = needModuleLevelHooks;
+            const needTargetedHooks = needConstructHook || needAfterClassHook || needAfterPrototypeHook;
 
             let modified = false;
             const bodyInsertions = [];
             const lastPrototypeMethodByContainer = new Map();
+            let skipTargetedDeepScan = false;
+
+            if (needTargetedHooks) {
+                const topLevelCandidates = this.collectTopLevelTargetCandidates(ast.body);
+                const hasTopLevelMatch = this.hasTopLevelTargetMatch(topLevelCandidates);
+                if (!hasTopLevelMatch) {
+                    skipTargetedDeepScan = true;
+                    if (!needModuleLevelHooks) {
+                        return sourceCode;
+                    }
+                    if (this.debug) {
+                        console.log(`[TRACER] skip deep AST walk (no top-level target match): ${filePath}`);
+                    }
+                }
+            }
 
             const ensurePrototypeContainerMap = (container) => {
                 if (!lastPrototypeMethodByContainer.has(container)) {
@@ -831,11 +934,11 @@ module.exports = class SWCInjectLoader {
                 }
             };
 
-            if (needConstructHook || needAfterClassHook || needAfterPrototypeHook) {
+            if ((needConstructHook || needAfterClassHook || needAfterPrototypeHook) && !skipTargetedDeepScan) {
                 walkNode(ast);
             }
 
-            if (needAfterPrototypeHook) {
+            if (needAfterPrototypeHook && !skipTargetedDeepScan) {
                 for (const [container, byClass] of lastPrototypeMethodByContainer.entries()) {
                     for (const [className, info] of byClass.entries()) {
                         const statements = this.getHookStatements(
@@ -1027,6 +1130,15 @@ module.exports = class SWCInjectLoader {
      */
     async processCode(sourceCode, filePath) {
         const { targets, generateCode } = this._options;
+        const useProcessCache = this._options.disableProcessCache !== true;
+        const needConstructHook = typeof generateCode?.construct === "function";
+        const needAfterClassHook = typeof generateCode?.afterClass === "function";
+        const needAfterPrototypeHook = typeof generateCode?.afterPrototypeMethod === "function";
+        const needAfterAllHook = typeof generateCode?.afterAll === "function";
+        const needBeforeEndIIFEHook = typeof generateCode?.beforeEndIIFE === "function";
+        const needTargetedHooks = needConstructHook || needAfterClassHook || needAfterPrototypeHook;
+        const needModuleLevelHooks = needAfterAllHook || needBeforeEndIIFEHook;
+        const hasAnyHooks = needTargetedHooks || needModuleLevelHooks;
 
         // Keep webpack magic comments behavior untouched for sensitive imports/requires.
         // Example: require(/* webpackIgnore: true */ 'sockjs')
@@ -1039,22 +1151,23 @@ module.exports = class SWCInjectLoader {
             !targets ||
             (typeof targets !== 'function' && targets.size === 0);
 
-        if (!sourceCode || typeof sourceCode !== 'string' || 
-            noTargets || 
-            (typeof generateCode?.construct !== 'function' &&
-             typeof generateCode?.afterClass !== 'function' &&
-             typeof generateCode?.afterPrototypeMethod !== 'function' &&
-             typeof generateCode?.afterAll !== 'function' &&
-             typeof generateCode?.beforeEndIIFE !== 'function')) {            return sourceCode;
+        if (!sourceCode || typeof sourceCode !== 'string' || !hasAnyHooks) {
+            return sourceCode;
         }
 
-        if (this._targetScanRegex && !this._targetScanRegex.test(sourceCode)) {
+        // Targeted hooks require targets; module-level hooks can run without them.
+        if (noTargets && needTargetedHooks && !needModuleLevelHooks) {
+            return sourceCode;
+        }
+
+        // Fast-path skip is only safe when no module-level hooks are requested.
+        if (this._targetScanRegex && needTargetedHooks && !needModuleLevelHooks && !this._targetScanRegex.test(sourceCode)) {
             return sourceCode;
         }
         
         // Кэширование результатов
-        const cacheKey = this.buildCacheKey(sourceCode, filePath || '');
-        if (this.cache.has(cacheKey)) {
+        const cacheKey = useProcessCache ? this.buildCacheKey(sourceCode, filePath || '') : null;
+        if (useProcessCache && this.cache.has(cacheKey)) {
             return this.cache.get(cacheKey);
         }
         
@@ -1086,8 +1199,10 @@ module.exports = class SWCInjectLoader {
         }
         
         // Сохраняем в кэш
-        this.setCacheEntry(cacheKey, result);
-        
+        if (useProcessCache) {
+            this.setCacheEntry(cacheKey, result);
+        }
+
         return result;
     }
 
@@ -1112,6 +1227,7 @@ module.exports = class SWCInjectLoader {
         this.clearCache(); // Сбрасываем кэш при изменении опций
     }
 }
+
 
 
 

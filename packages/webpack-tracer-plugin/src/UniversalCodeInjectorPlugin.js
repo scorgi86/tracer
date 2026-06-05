@@ -157,24 +157,35 @@ class UniversalCodeInjectorPlugin {
         }
 
         if (typeof injectLoaderOpts.targets === 'function') {
-          const targetsCallbackSource = injectLoaderOpts.targets.toString();
-          const callbackKey = this.buildTargetsCallbackKey(targetsCallbackSource);
-          const root = globalThis;
-          const key = '__WEBPACK_TRACER_TARGET_CALLBACKS__';
-          if (!root[key]) {
-            root[key] = {};
-          }
-          root[key][callbackKey] = injectLoaderOpts.targets;
+          const allowTargetsCallbackInDebug =
+            injectLoaderOpts.allowTargetsCallbackInDebug === true && debug === true;
 
-          injectLoaderOpts.targetsCallbackEnabled = true;
-          injectLoaderOpts.targetsCallbackKey = callbackKey;
-          injectLoaderOpts.targetsCallbackSource = targetsCallbackSource;
-          injectLoaderOpts.targets = {
-            __tracerTargetsCallbackSource: injectLoaderOpts.targetsCallbackSource
-          };
+          if (allowTargetsCallbackInDebug) {
+            const callbackKey = this.buildTargetsCallbackKey(injectLoaderOpts.targets.toString());
+            const root = globalThis;
+            const key = '__WEBPACK_TRACER_TARGET_CALLBACKS__';
+            if (!root[key]) {
+              root[key] = {};
+            }
+            root[key][callbackKey] = injectLoaderOpts.targets;
 
-          if (debug) {
-            console.log("[TRACER] targets callback serialized");
+            injectLoaderOpts.targetsCallbackEnabled = true;
+            injectLoaderOpts.targetsCallbackKey = callbackKey;
+            injectLoaderOpts.allowTargetsCallbackInDebug = true;
+            // keep loader options serializable and restore callback from registry by key
+            injectLoaderOpts.targets = [];
+
+            if (debug) {
+              console.log("[TRACER] targets callback enabled in debug mode");
+            }
+          } else {
+            if (debug) {
+              console.warn(
+                "[TRACER] function targets are disabled by default. Use Set/Array targets or set allowTargetsCallbackInDebug=true with debug=true."
+              );
+            }
+            // default mode: only Set/Array targets
+            injectLoaderOpts.targets = [];
           }
         }
 

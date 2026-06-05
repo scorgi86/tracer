@@ -34,6 +34,15 @@ export const buildTraceOptions = (options = {}) => {
         callFilter: typeof options.callFilter === 'function' ? options.callFilter : null,
         propertyFilter: typeof options.propertyFilter === 'function' ? options.propertyFilter : null,
         captureContext: options.captureContext === true,
+        throwSubscriberErrors: options.throwSubscriberErrors !== false,
+        onSubscriberError: typeof options.onSubscriberError === "function"
+            ? options.onSubscriberError
+            : null,
+        instrumentationReport: options.instrumentationReport === true,
+        throwOnInstrumentationError: options.throwOnInstrumentationError === true,
+        onInstrumentationError: typeof options.onInstrumentationError === "function"
+            ? options.onInstrumentationError
+            : null,
     };
 }
 
@@ -177,6 +186,11 @@ export const tracerState = {
 
 let callSeq = 0;
 const nextCallId = () => ++callSeq;
+const now = () => (
+    typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now()
+);
 
 /**
  * Оборачивает конструктор класса для трассировки вызовов методов
@@ -261,7 +275,7 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
         if (!hasBeforeSubscribers && !hasAfterSubscribers) {
             return targetFn.apply(this, args);
         }
-        const startedAt = Date.now();
+        const startedAt = now();
         const data = {
             eventType: 'functionCall',
             fnKey,
@@ -287,7 +301,7 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
                 if (!hasAfterSubscribers) {
                     return;
                 }
-                const endedAt = Date.now();
+                const endedAt = now();
                 emitter.notify('afterCallMethod', {
                     ...data,
                     place: 'after',
@@ -342,7 +356,7 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
                 if (!hasAfterSubscribers) {
                     return;
                 }
-                const endedAt = Date.now();
+                const endedAt = now();
                 emitter.notify('afterCallMethod', {
                     ...data,
                     place: 'after',
@@ -576,11 +590,11 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
     const d = Object.getOwnPropertyDescriptor(target, propName);
 
     if (!d) {
-        return;
+        return false;
     }
     
     if (d.configurable === false) {
-        return;
+        return false;
     }
 
     const originalGetter = d.get;
@@ -636,7 +650,7 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
             const calcValue = originalGetter ? originalGetter.call(this) : newValue;
             const args = {
                 eventType: 'propertySet',
-                place: 'before', currValue: internalValue, value: calcValue, thisArg: this,
+                place: 'before', curValue: internalValue, value: calcValue, thisArg: this,
                 propName, className, tracerState,
                 fullName: `${className}.${propName}`,
                 callStack: ExecutionContext.getCurrentContext()
@@ -683,6 +697,7 @@ export const wrapProxyPropDescriptor = (target, propName, className) => {
     target[propertyMapSymbol].set(propName, true);
 
     Object.defineProperty(target, propName, patchedDescriptor);
+    return true;
 }
 
 /**
@@ -718,12 +733,49 @@ wrapProxyPropDescriptor.isProxy = (target, propName) => {
  * service.updateUser(1, { name: 'Jane' }); // Вызов метода отслеживается
  */
 export function traverse(obj, className = '', options = {}) {
+    const report = options.report || {
+        targetName: className || "",
+        wrappedMethods: [],
+        wrappedProperties: [],
+        failedMethods: [],
+        failedProperties: [],
+        skippedMethods: [],
+        skippedProperties: [],
+    };
     const includeProperties = options.includeProperties === true;
+    const onInstrumentationError = typeof options.onInstrumentationError === "function"
+        ? options.onInstrumentationError
+        : null;
+    const throwOnInstrumentationError = options.throwOnInstrumentationError === true;
+
+    const pushFailure = (collectionName, fnKey, error) => {
+        const entry = {
+            name: fnKey,
+            reason: error && error.message ? error.message : String(error),
+            error,
+        };
+        report[collectionName].push(entry);
+        if (onInstrumentationError) {
+            onInstrumentationError({
+                className,
+                ...entry,
+            });
+        }
+    };
+
     if (!obj || typeof obj !== 'object') {
-        return;
+        report.skippedMethods.push({
+            name: className || "<target>",
+            reason: "invalid-target",
+        });
+        return report;
     }
     if (isHostObject(obj)) {
-        return;
+        report.skippedMethods.push({
+            name: className || "<target>",
+            reason: "host-object",
+        });
+        return report;
     }
 
     for (const fnKey of Object.getOwnPropertyNames(obj)) {
@@ -732,28 +784,64 @@ export function traverse(obj, className = '', options = {}) {
             continue;
         }
 
+        let isFunctionTarget = false;
         try {
             const descriptor = Object.getOwnPropertyDescriptor(obj, fnKey);
-            const isFucntion = typeof descriptor.value === 'function';
+            if (!descriptor) {
+                report.skippedMethods.push({
+                    name: fnKey,
+                    reason: "no-descriptor",
+                });
+                continue;
+            }
+            const isFunction = typeof descriptor.value === 'function';
+            isFunctionTarget = isFunction;
             
-            if (isFucntion) {
+            if (isFunction) {
                 const targetFn = descriptor.value;
                 if (isNativeFunction(targetFn)) {
+                    report.skippedMethods.push({
+                        name: fnKey,
+                        reason: "native-function",
+                    });
                     continue;
                 }
 
                 if (!createProxyFn.isProxyFn(targetFn))  {
                     const proxyFn = createProxyFn({fnKey, targetFn, className});
                     Object.defineProperty(obj, fnKey, { ...descriptor, value: proxyFn });
+                    report.wrappedMethods.push(fnKey);
+                } else {
+                    report.skippedMethods.push({
+                        name: fnKey,
+                        reason: "already-proxy",
+                    });
                 }
             }
             else if (includeProperties && !wrapProxyPropDescriptor.isProxy(obj, fnKey)) {
-                wrapProxyPropDescriptor(obj, fnKey, className);
+                const wrapped = wrapProxyPropDescriptor(obj, fnKey, className);
+                if (wrapped) {
+                    report.wrappedProperties.push(fnKey);
+                } else {
+                    report.skippedProperties.push({
+                        name: fnKey,
+                        reason: "non-configurable-or-missing-descriptor",
+                    });
+                }
             }
         } catch (e) {
-            console.error(e)
+            if (isFunctionTarget) {
+                pushFailure("failedMethods", fnKey, e);
+            } else {
+                pushFailure("failedProperties", fnKey, e);
+            }
+            if (throwOnInstrumentationError) {
+                throw e;
+            }
         }
     }
+
+    return report;
 }
 
 /**

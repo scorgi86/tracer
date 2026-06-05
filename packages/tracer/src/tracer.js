@@ -18,6 +18,7 @@ import * as sliceService from "./services/slices.js";
 import * as scenarioService from "./services/scenarios.js";
 
 const stateConfigKey = Symbol("stateConfigKey");
+const instrumentationReportKey = Symbol("instrumentation-report");
 
 const traceCallback = subscriptionService.createStore();
 const traceCallCallback = subscriptionService.createStore();
@@ -224,6 +225,44 @@ const executeInSlice = (sliceName, invoke) => {
   }
 };
 
+const applySubscriberErrorPolicy = (traceOptions) => {
+  emitter.setSubscriberErrorPolicy({
+    throwSubscriberErrors: traceOptions.throwSubscriberErrors,
+    onSubscriberError: traceOptions.onSubscriberError,
+  });
+};
+
+const createInstrumentationReport = (targetName = "") => ({
+  targetName,
+  wrappedMethods: [],
+  wrappedProperties: [],
+  failedMethods: [],
+  failedProperties: [],
+  skippedMethods: [],
+  skippedProperties: [],
+});
+
+const mergeInstrumentationReport = (target, source) => {
+  if (!source) {
+    return target;
+  }
+  target.wrappedMethods.push(...(source.wrappedMethods || []));
+  target.wrappedProperties.push(...(source.wrappedProperties || []));
+  target.failedMethods.push(...(source.failedMethods || []));
+  target.failedProperties.push(...(source.failedProperties || []));
+  target.skippedMethods.push(...(source.skippedMethods || []));
+  target.skippedProperties.push(...(source.skippedProperties || []));
+  return target;
+};
+
+const buildInstrumentationOptions = () => {
+  const traceOptions = getTraceOptions();
+  return {
+    throwOnInstrumentationError: traceOptions.throwOnInstrumentationError === true,
+    onInstrumentationError: traceOptions.onInstrumentationError,
+  };
+};
+
 /**
  * Главный класс трассировщика для мониторинга вызовов функций,
  * доступа к свойствам и контекста выполнения.
@@ -256,20 +295,22 @@ export class Tracer {
     if (!preset) {
       throw new Error(`Неизвестный профиль трассировки: ${profileName}`);
     }
-    setTraceOptions({
+    const nextOptions = setTraceOptions({
       ...preset,
       ...overrides,
       profile: profileName,
     });
+    applySubscriberErrorPolicy(nextOptions);
     return Tracer;
   }
 
   static configureTracing(options = {}) {
     const current = getTraceOptions();
-    setTraceOptions({
+    const nextOptions = setTraceOptions({
       ...current,
       ...options,
     });
+    applySubscriberErrorPolicy(nextOptions);
     return Tracer;
   }
 
@@ -399,7 +440,8 @@ export class Tracer {
    */
   static observe(target, targetName) {
     const finalTargetName = targetName || target?.name || target?.constructor?.name || "Object";
-    traverse(target, finalTargetName);
+    const report = traverse(target, finalTargetName, buildInstrumentationOptions());
+    Tracer.tracerState.set(instrumentationReportKey, report);
 
     return Tracer;
   }
@@ -416,7 +458,8 @@ export class Tracer {
       throw new Error(`Не найден прототип класса ${className}`);
     }
     const finalClassName = className || target?.name || "AnonymousClass";
-    traverse(target.prototype, `${finalClassName}`);
+    const report = traverse(target.prototype, `${finalClassName}`, buildInstrumentationOptions());
+    Tracer.tracerState.set(instrumentationReportKey, report);
 
     return Tracer;
   }
@@ -430,12 +473,20 @@ export class Tracer {
     const targetValues = Array.isArray(targetList)
       ? targetList
       : Object.values(targetList || {});
+    const summary = createInstrumentationReport("observeAll");
+    const instrumentationOptions = buildInstrumentationOptions();
 
     targetValues.forEach((target) => {
       if (target) {
-        Tracer.observe(target);
+        const report = traverse(
+          target,
+          target?.name || target?.constructor?.name || "Object",
+          instrumentationOptions,
+        );
+        mergeInstrumentationReport(summary, report);
       }
     });
+    Tracer.tracerState.set(instrumentationReportKey, summary);
 
     return Tracer;
   }
@@ -449,12 +500,20 @@ export class Tracer {
     const targetValues = Array.isArray(targetList)
       ? targetList
       : Object.values(targetList || {});
+    const summary = createInstrumentationReport("observePrototypeAll");
+    const instrumentationOptions = buildInstrumentationOptions();
 
     targetValues.forEach((target) => {
       if (typeof target === "function") {
-        Tracer.observePrototype(target);
+        const report = traverse(
+          target.prototype,
+          target?.name || "AnonymousClass",
+          instrumentationOptions,
+        );
+        mergeInstrumentationReport(summary, report);
       }
     });
+    Tracer.tracerState.set(instrumentationReportKey, summary);
 
     return Tracer;
   }
@@ -471,10 +530,18 @@ export class Tracer {
             .length > 0
         : false,
     );
+    const summary = createInstrumentationReport("observeFromExports");
+    const instrumentationOptions = buildInstrumentationOptions();
 
     classList.forEach((className) => {
-      Tracer.observe(exportTarget[className], className);
+      const report = traverse(
+        exportTarget[className],
+        className,
+        instrumentationOptions,
+      );
+      mergeInstrumentationReport(summary, report);
     });
+    Tracer.tracerState.set(instrumentationReportKey, summary);
 
     return Tracer;
   }
@@ -486,6 +553,8 @@ export class Tracer {
    */
   static observePrototypesFromExports(exportTarget) {
     let map = new Map();
+    const summary = createInstrumentationReport("observePrototypesFromExports");
+    const instrumentationOptions = buildInstrumentationOptions();
 
     const classList = Object.keys(exportTarget).filter((key) => {
       const proto = exportTarget[key]?.prototype;
@@ -497,10 +566,25 @@ export class Tracer {
 
     classList.forEach((className) => {
       map.set(className, true);
-      Tracer.observePrototype(exportTarget[className], className);
+      const report = traverse(
+        exportTarget[className].prototype,
+        className,
+        instrumentationOptions,
+      );
+      mergeInstrumentationReport(summary, report);
     });
+    Tracer.tracerState.set(instrumentationReportKey, summary);
 
     return map;
+  }
+
+  /**
+   * Возвращает отчет последней попытки инструментации.
+   * Удобно для диагностики случаев, когда часть методов/свойств не была обернута.
+   * @returns {object|null}
+   */
+  static getLastInstrumentationReport() {
+    return Tracer.tracerState.get(instrumentationReportKey) || null;
   }
 
   static registerSliceDefinition(streamSliceName, config) {
@@ -1064,7 +1148,9 @@ export class Tracer {
   static [stateConfigKey] = new Map();
 }
 
-tracerState.set(traceOptionsSymbol, buildTraceOptions(TRACE_PROFILES.balanced));
+const initialTraceOptions = buildTraceOptions(TRACE_PROFILES.balanced);
+tracerState.set(traceOptionsSymbol, initialTraceOptions);
+applySubscriberErrorPolicy(initialTraceOptions);
 
 // Добавить проверку окружения
 if (typeof window !== 'undefined') {

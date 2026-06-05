@@ -762,6 +762,109 @@ describe("Tracer", () => {
     expect(events[1].error).toBeInstanceOf(Error);
   });
 
+  test("propertySet event exposes curValue consistently", () => {
+    const events = [];
+    const target = { count: 1 };
+
+    Tracer.observeProperty(target, "count", "Counter");
+    Tracer.traceProperties((event) => events.push(event));
+
+    target.count = 2;
+
+    expect(events).toHaveLength(1);
+    expect(events[0].curValue).toBe(1);
+    expect(Object.prototype.hasOwnProperty.call(events[0], "currValue")).toBe(false);
+  });
+
+  test("subscriber safe mode continues callbacks and reports subscriber failures", () => {
+    const errors = [];
+    const calls = [];
+    const traced = Tracer.createProxyFn((x) => x + 1, "safeModeCall");
+
+    Tracer.configureTracing({
+      throwSubscriberErrors: false,
+      onSubscriberError: (meta) => errors.push(meta),
+    });
+
+    Tracer.traceCalls(() => {
+      throw new Error("subscriber failed");
+    });
+    Tracer.traceCalls((event) => calls.push(`${event.fnKey}:${event.place}`));
+
+    expect(() => traced(1)).not.toThrow();
+    expect(calls).toEqual(["safeModeCall:before", "safeModeCall:after"]);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+    expect(errors[0]).toMatchObject({ eventName: "beforeCallMethod" });
+  });
+
+  test("durationMs is based on high-resolution timer when performance.now is available", () => {
+    if (!globalThis.performance || typeof globalThis.performance.now !== "function") {
+      return;
+    }
+
+    const nowSpy = jest.spyOn(globalThis.performance, "now")
+      .mockReturnValueOnce(10.25)
+      .mockReturnValueOnce(12.75);
+
+    try {
+      const events = [];
+      const traced = Tracer.createProxyFn((x) => x, "hires");
+      Tracer.traceCalls((event) => events.push(event));
+
+      traced(1);
+
+      expect(events).toHaveLength(2);
+      expect(events[1].durationMs).toBeCloseTo(2.5, 5);
+      expect(Number.isInteger(events[1].durationMs)).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("observe stores instrumentation report for methods that failed to wrap", () => {
+    const errors = [];
+    const target = {};
+    Object.defineProperty(target, "lockedCall", {
+      value: function lockedCall() {
+        return "ok";
+      },
+      configurable: false,
+      writable: false,
+      enumerable: true,
+    });
+
+    Tracer.configureTracing({
+      instrumentationReport: true,
+      onInstrumentationError: (meta) => errors.push(meta),
+    });
+
+    expect(() => Tracer.observe(target, "LockedTarget")).not.toThrow();
+
+    const report = Tracer.getLastInstrumentationReport();
+    expect(report).toBeTruthy();
+    expect(report.targetName).toBe("LockedTarget");
+    expect(report.failedMethods.some((item) => item.name === "lockedCall")).toBe(true);
+    expect(errors.some((item) => item.name === "lockedCall")).toBe(true);
+  });
+
+  test("observe throws when throwOnInstrumentationError is enabled", () => {
+    const target = {};
+    Object.defineProperty(target, "lockedCall", {
+      value: function lockedCall() {
+        return "ok";
+      },
+      configurable: false,
+      writable: false,
+      enumerable: true,
+    });
+
+    Tracer.configureTracing({
+      throwOnInstrumentationError: true,
+    });
+
+    expect(() => Tracer.observe(target, "LockedTarget")).toThrow();
+  });
+
   test("ReportSliceDiff: creates slice from start/end predicates and tracks calls inside", () => {
     const sliceName = nextName("report_slice");
     const fn = Tracer.createProxyFn((value) => value, "step");

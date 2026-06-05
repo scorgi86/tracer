@@ -5,6 +5,8 @@ export class PubSub {
     
     constructor() {
         this._events = new Map;
+        this._throwSubscriberErrors = true;
+        this._onSubscriberError = null;
     }
 
     notify(eventName, ...args) {
@@ -15,7 +17,27 @@ export class PubSub {
         }
 
         for (let i = 0; i < callbacks.length; i += 1) {
-            callbacks[i](...args);
+            try {
+                callbacks[i](...args);
+            } catch (error) {
+                if (typeof this._onSubscriberError === "function") {
+                    try {
+                        this._onSubscriberError({
+                            eventName,
+                            error,
+                            callback: callbacks[i],
+                            callbackIndex: i,
+                            args,
+                        });
+                    } catch (_) {
+                        // Ignore observer handler failures to preserve original failure behavior.
+                    }
+                }
+
+                if (this._throwSubscriberErrors) {
+                    throw error;
+                }
+            }
         }
     }
 
@@ -38,6 +60,16 @@ export class PubSub {
     has = (eventName) => {
         const callbacks = this._events.get(eventName);
         return !!(callbacks && callbacks.length);
+    }
+
+    setSubscriberErrorPolicy = ({
+        throwSubscriberErrors = true,
+        onSubscriberError = null,
+    } = {}) => {
+        this._throwSubscriberErrors = throwSubscriberErrors !== false;
+        this._onSubscriberError = typeof onSubscriberError === "function"
+            ? onSubscriberError
+            : null;
     }
 
     unSubscribeAll(eventName) {

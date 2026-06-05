@@ -18,6 +18,7 @@ export default defineConfig({
         items: [
           { text: 'Главная', link: '/' },
           { text: 'Readme', link: '/readme' },
+          { text: 'For Everyone', link: '/legacy-onboarding' },
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'Context', link: '/context' }
         ]

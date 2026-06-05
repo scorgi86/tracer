@@ -38,7 +38,7 @@ describe('InjectConstructorCodePlugin', () => {
       plugins: [
         new InjectConstructorCodePlugin({
           injectLoaderOpts: {
-            targets: (className) => className === "CEditorPage",
+            targets: ["CEditorPage"],
             /** @type   */
             generateCode: {
                 /** Добавит код после конструктора */

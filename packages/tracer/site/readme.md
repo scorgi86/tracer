@@ -18,6 +18,7 @@ layout: default
 | Задача | Куда идти |
 |---|---|
 | Быстро включить трассировку в проекте | [Быстрый старт](./getting-started.md) |
+| Объяснить инструмент широкой аудитории | [Tracer для широкой аудитории](./legacy-onboarding.md) |
 | Разобраться в полном API и профилях | [Полная документация](./index.md) |
 | Нужны сигнатуры и параметры методов | [API Reference](./api-reference.md) |
 | Legacy-отладка по сценариям | [Гайд разработчика](./tracer-dev-guide.md) |
@@ -32,6 +33,7 @@ layout: default
 - [Полная документация](./index.md)
 - [API Reference](./api-reference.md)
 - [Быстрый старт](./getting-started.md)
+- [Tracer для широкой аудитории](./legacy-onboarding.md)
 - [Полный гайд разработчика](./tracer-dev-guide.md)
 - [Гайд по AI](./tracer-ai-guide.md)
 - [Слайсы](./slices.md)

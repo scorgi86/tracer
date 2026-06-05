@@ -78,4 +78,47 @@ describe("SWCInjectLoader cache", () => {
         expect(first).not.toBe(second);
         expect(calls).toBe(2);
     });
+
+    test("options hash changes when hook signatures change", () => {
+        const loaderA = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                afterAll: () => "globalThis.__hook_sig = 'A';"
+            }
+        });
+
+        const loaderB = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                afterAll: () => "globalThis.__hook_sig = 'B';"
+            }
+        });
+
+        expect(loaderA._optionsHash).not.toBe(loaderB._optionsHash);
+    });
+
+    test("options hash changes when targets callback key changes", () => {
+        const makeTargetsFn = () => true;
+        const loaderA = new SWCInjectLoader({
+            targets: makeTargetsFn,
+            targetsCallbackEnabled: true,
+            targetsCallbackKey: "cb-A",
+            allowTargetsCallbackInDebug: true,
+            generateCode: {
+                construct: ({ className }) => `globalThis.__cache_target='${className}';`
+            }
+        });
+
+        const loaderB = new SWCInjectLoader({
+            targets: makeTargetsFn,
+            targetsCallbackEnabled: true,
+            targetsCallbackKey: "cb-B",
+            allowTargetsCallbackInDebug: true,
+            generateCode: {
+                construct: ({ className }) => `globalThis.__cache_target='${className}';`
+            }
+        });
+
+        expect(loaderA._optionsHash).not.toBe(loaderB._optionsHash);
+    });
 });

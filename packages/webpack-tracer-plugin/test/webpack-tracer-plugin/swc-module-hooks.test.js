@@ -66,4 +66,26 @@ CEditorPage.prototype.init = function() { return 1; };
         expect(result.includes("CEditorPage")).toBe(true);
         expect(result.includes("CEditorPage|dst")).toBe(false);
     });
+
+    test("keeps module-level hooks when top-level target precheck skips deep targeted scan", async () => {
+        const source = `
+function NotATarget() {
+  this.init = function() { return 1; };
+}
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                construct: ({ className }) => `globalThis.__construct='${className}';`,
+                afterAll: ({ hasIIFE, moduleSymbols }) =>
+                    `globalThis.__afterAllFallback='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/module-precheck-fallback.js");
+        expect(result.includes("__construct")).toBe(false);
+        expect(result.includes("__afterAllFallback")).toBe(true);
+        expect(result.includes("false:NotATarget")).toBe(true);
+    });
 });
