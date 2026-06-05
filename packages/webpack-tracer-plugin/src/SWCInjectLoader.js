@@ -8,7 +8,7 @@ const swcPkg = require("@swc/core/package.json");
 module.exports = class SWCInjectLoader {
     constructor(opts = {}) {
         this._options = {
-            generateCode: { construct: () => '' },
+            generateCode: { onConstructor: () => '' },
             targets: new Set(),
             classConfig: new Map(),
             maxCacheEntries: 500,
@@ -40,20 +40,14 @@ module.exports = class SWCInjectLoader {
             disableProcessCache: opts.disableProcessCache === true,
         };
 
-        const generateCodeSig = opts.generateCode?.construct
-            ? opts.generateCode.construct.toString()
+        const generateCodeSig = opts.generateCode?.onConstructor
+            ? opts.generateCode.onConstructor.toString()
             : '';
-        const generateAfterClassSig = opts.generateCode?.afterClass
-            ? opts.generateCode.afterClass.toString()
+        const generateAfterLastPrototypeAssignSig = opts.generateCode?.onAfterLastPrototypeAssign
+            ? opts.generateCode.onAfterLastPrototypeAssign.toString()
             : '';
-        const generateAfterPrototypeMethodSig = opts.generateCode?.afterPrototypeMethod
-            ? opts.generateCode.afterPrototypeMethod.toString()
-            : '';
-        const generateAfterAllSig = opts.generateCode?.afterAll
-            ? opts.generateCode.afterAll.toString()
-            : '';
-        const generateBeforeEndIIFESig = opts.generateCode?.beforeEndIIFE
-            ? opts.generateCode.beforeEndIIFE.toString()
+        const generateBeforeEndModuleSig = opts.generateCode?.onBeforeEndModule
+            ? opts.generateCode.onBeforeEndModule.toString()
             : '';
 
         return JSON.stringify({
@@ -63,16 +57,12 @@ module.exports = class SWCInjectLoader {
             classConfig,
             flags,
             generateCodeSig,
-            generateAfterClassSig,
-            generateAfterPrototypeMethodSig,
-            generateAfterAllSig,
-            generateBeforeEndIIFESig,
+            generateAfterLastPrototypeAssignSig,
+            generateBeforeEndModuleSig,
             fileSignatureHooks: [
-                "construct",
-                "afterClass",
-                "afterPrototypeMethod",
-                "afterAll",
-                "beforeEndIIFE",
+                "onConstructor",
+                "onAfterLastPrototypeAssign",
+                "onBeforeEndModule",
             ].filter((hookName) => typeof opts.generateCode?.[hookName] === "function"),
         });
     }
@@ -133,7 +123,7 @@ module.exports = class SWCInjectLoader {
 
     getObserverStatements(name, generateCodeFn, extraArgs = {}) {
         const hasInstanceMethodsOnThis = extraArgs.hasInstanceMethodsOnThis === true ? 1 : 0;
-        const cacheKey = `construct:${name}:${hasInstanceMethodsOnThis}`;
+        const cacheKey = `onConstructor:${name}:${hasInstanceMethodsOnThis}`;
         if (this.observerStatementsCache.has(cacheKey)) {
             return this.observerStatementsCache.get(cacheKey);
         }
@@ -142,7 +132,7 @@ module.exports = class SWCInjectLoader {
         if (this.isUnsafeTracerCode(code)) {
             this.observerStatementsCache.set(cacheKey, []);
             if (this.debug) {
-                console.warn("[TRACER] skip unsafe generated construct code:", code);
+                console.warn("[TRACER] skip unsafe generated onConstructor code:", code);
             }
             return [];
         }
@@ -788,14 +778,12 @@ module.exports = class SWCInjectLoader {
                 comments: true
             });
             
-            const needConstructHook = typeof generateCode.construct === "function";
-            const needAfterClassHook = typeof generateCode.afterClass === "function";
-            const needAfterPrototypeHook = typeof generateCode.afterPrototypeMethod === "function";
-            const needAfterAllHook = typeof generateCode.afterAll === "function";
-            const needBeforeEndIIFEHook = typeof generateCode.beforeEndIIFE === "function";
-            const needModuleLevelHooks = needAfterAllHook || needBeforeEndIIFEHook;
+            const needOnConstructorHook = typeof generateCode.onConstructor === "function";
+            const needAfterPrototypeHook = typeof generateCode.onAfterLastPrototypeAssign === "function";
+            const needBeforeEndModuleHook = typeof generateCode.onBeforeEndModule === "function";
+            const needModuleLevelHooks = needBeforeEndModuleHook;
             const needModuleSymbols = needModuleLevelHooks;
-            const needTargetedHooks = needConstructHook || needAfterClassHook || needAfterPrototypeHook;
+            const needTargetedHooks = needOnConstructorHook || needAfterPrototypeHook;
 
             let modified = false;
             const bodyInsertions = [];
@@ -809,9 +797,6 @@ module.exports = class SWCInjectLoader {
                     skipTargetedDeepScan = true;
                     if (!needModuleLevelHooks) {
                         return sourceCode;
-                    }
-                    if (this.debug) {
-                        console.log(`[TRACER] skip deep AST walk (no top-level target match): ${filePath}`);
                     }
                 }
             }
@@ -830,40 +815,40 @@ module.exports = class SWCInjectLoader {
                     node.type === "ClassDeclaration" &&
                     node.identifier &&
                     this.shouldTraceTarget(node.identifier.value) &&
-                    needConstructHook
+                    needOnConstructorHook
                 ) {
                     const className = node.identifier.value;
-                    if (this.processClassSafe(node, className, generateCode.construct)) {
+                    if (this.processClassSafe(node, className, generateCode.onConstructor)) {
                         modified = true;
                     }
                 } else if (
                     node.type === "FunctionDeclaration" &&
                     node.identifier &&
                     this.shouldTraceTarget(node.identifier.value) &&
-                    needConstructHook
+                    needOnConstructorHook
                 ) {
                     const functionName = node.identifier.value;
-                    if (this.processFunctionSafe(node, functionName, generateCode.construct)) {
+                    if (this.processFunctionSafe(node, functionName, generateCode.onConstructor)) {
                         modified = true;
                     }
                 } else if (
                     node.type === "ClassExpression" &&
                     node.identifier &&
                     this.shouldTraceTarget(node.identifier.value) &&
-                    needConstructHook
+                    needOnConstructorHook
                 ) {
                     const className = node.identifier.value;
-                    if (this.processClassSafe(node, className, generateCode.construct)) {
+                    if (this.processClassSafe(node, className, generateCode.onConstructor)) {
                         modified = true;
                     }
                 } else if (
                     node.type === "FunctionExpression" &&
                     node.identifier &&
                     this.shouldTraceTarget(node.identifier.value) &&
-                    needConstructHook
+                    needOnConstructorHook
                 ) {
                     const functionName = node.identifier.value;
-                    if (this.processFunctionSafe(node, functionName, generateCode.construct)) {
+                    if (this.processFunctionSafe(node, functionName, generateCode.onConstructor)) {
                         modified = true;
                     }
                 }
@@ -892,24 +877,6 @@ module.exports = class SWCInjectLoader {
 
                     visitNode(node);
 
-                    if (
-                        needAfterClassHook &&
-                        node.type === "ClassDeclaration" &&
-                        node.identifier
-                    ) {
-                        const className = node.identifier.value;
-                        if (this.shouldTraceTarget(className)) {
-                            const statements = this.getHookStatements(
-                                'afterClass:' + className,
-                                generateCode.afterClass,
-                                { className }
-                            );
-                            if (statements.length) {
-                                bodyInsertions.push({ container: arr, index: i + 1, statements });
-                            }
-                        }
-                    }
-
                     if (needAfterPrototypeHook) {
                         const protoInfo = this.getPrototypeAssignmentInfo(node);
                         if (protoInfo && this.shouldTraceTarget(protoInfo.className)) {
@@ -934,7 +901,7 @@ module.exports = class SWCInjectLoader {
                 }
             };
 
-            if ((needConstructHook || needAfterClassHook || needAfterPrototypeHook) && !skipTargetedDeepScan) {
+            if ((needOnConstructorHook || needAfterPrototypeHook) && !skipTargetedDeepScan) {
                 walkNode(ast);
             }
 
@@ -942,8 +909,8 @@ module.exports = class SWCInjectLoader {
                 for (const [container, byClass] of lastPrototypeMethodByContainer.entries()) {
                     for (const [className, info] of byClass.entries()) {
                         const statements = this.getHookStatements(
-                            'afterPrototypeMethod:' + className + ':' + info.methodName,
-                            generateCode.afterPrototypeMethod,
+                            'onAfterLastPrototypeAssign:' + className + ':' + info.methodName,
+                            generateCode.onAfterLastPrototypeAssign,
                             { className, methodName: info.methodName }
                         );
                         if (statements.length) {
@@ -976,7 +943,7 @@ module.exports = class SWCInjectLoader {
             if (needModuleLevelHooks) {
                 const topLevelIIFE = this.findTopLevelIIFE(ast.body);
 
-                if (topLevelIIFE && needBeforeEndIIFEHook) {
+                if (topLevelIIFE) {
                     const moduleSymbols = needModuleSymbols
                         ? this.collectModuleSymbolsFromStatements(topLevelIIFE.body)
                         : null;
@@ -992,8 +959,8 @@ module.exports = class SWCInjectLoader {
                         (moduleSymbols?.functions || []).join("|"),
                     ].join("::");
                     const statements = this.getHookStatements(
-                        `beforeEndIIFE:module:${moduleKeySuffix}`,
-                        generateCode.beforeEndIIFE,
+                        `onBeforeEndModule:module:${moduleKeySuffix}`,
+                        generateCode.onBeforeEndModule,
                         {
                             ...moduleContext,
                             hasIIFE: true,
@@ -1003,7 +970,7 @@ module.exports = class SWCInjectLoader {
                         topLevelIIFE.body.splice(insertIndex, 0, ...statements);
                         modified = true;
                     }
-                } else if (!topLevelIIFE && needAfterAllHook) {
+                } else {
                     const moduleSymbols = needModuleSymbols
                         ? this.collectModuleSymbolsFromStatements(ast.body)
                         : null;
@@ -1018,8 +985,8 @@ module.exports = class SWCInjectLoader {
                         (moduleSymbols?.functions || []).join("|"),
                     ].join("::");
                     const statements = this.getHookStatements(
-                        `afterAll:module:${moduleKeySuffix}`,
-                        generateCode.afterAll,
+                        `onBeforeEndModule:module:${moduleKeySuffix}`,
+                        generateCode.onBeforeEndModule,
                         {
                             ...moduleContext,
                             hasIIFE: false,
@@ -1061,7 +1028,7 @@ module.exports = class SWCInjectLoader {
         let result = sourceCode;
         
         for (const target of targets) {
-            const observerCode = generateCode.construct({ className: target });
+            const observerCode = generateCode.onConstructor({ className: target });
             
             if (!observerCode || observerCode.trim() === '') {
                 continue;
@@ -1131,13 +1098,11 @@ module.exports = class SWCInjectLoader {
     async processCode(sourceCode, filePath) {
         const { targets, generateCode } = this._options;
         const useProcessCache = this._options.disableProcessCache !== true;
-        const needConstructHook = typeof generateCode?.construct === "function";
-        const needAfterClassHook = typeof generateCode?.afterClass === "function";
-        const needAfterPrototypeHook = typeof generateCode?.afterPrototypeMethod === "function";
-        const needAfterAllHook = typeof generateCode?.afterAll === "function";
-        const needBeforeEndIIFEHook = typeof generateCode?.beforeEndIIFE === "function";
-        const needTargetedHooks = needConstructHook || needAfterClassHook || needAfterPrototypeHook;
-        const needModuleLevelHooks = needAfterAllHook || needBeforeEndIIFEHook;
+        const needOnConstructorHook = typeof generateCode?.onConstructor === "function";
+        const needAfterPrototypeHook = typeof generateCode?.onAfterLastPrototypeAssign === "function";
+        const needBeforeEndModuleHook = typeof generateCode?.onBeforeEndModule === "function";
+        const needTargetedHooks = needOnConstructorHook || needAfterPrototypeHook;
+        const needModuleLevelHooks = needBeforeEndModuleHook;
         const hasAnyHooks = needTargetedHooks || needModuleLevelHooks;
 
         // Keep webpack magic comments behavior untouched for sensitive imports/requires.

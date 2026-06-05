@@ -157,35 +157,21 @@ class UniversalCodeInjectorPlugin {
         }
 
         if (typeof injectLoaderOpts.targets === 'function') {
-          const allowTargetsCallbackInDebug =
-            injectLoaderOpts.allowTargetsCallbackInDebug === true && debug === true;
+          const callbackKey = this.buildTargetsCallbackKey(injectLoaderOpts.targets.toString());
+          const root = globalThis;
+          const key = '__WEBPACK_TRACER_TARGET_CALLBACKS__';
+          if (!root[key]) {
+            root[key] = {};
+          }
+          root[key][callbackKey] = injectLoaderOpts.targets;
 
-          if (allowTargetsCallbackInDebug) {
-            const callbackKey = this.buildTargetsCallbackKey(injectLoaderOpts.targets.toString());
-            const root = globalThis;
-            const key = '__WEBPACK_TRACER_TARGET_CALLBACKS__';
-            if (!root[key]) {
-              root[key] = {};
-            }
-            root[key][callbackKey] = injectLoaderOpts.targets;
+          injectLoaderOpts.targetsCallbackEnabled = true;
+          injectLoaderOpts.targetsCallbackKey = callbackKey;
+          // keep loader options serializable and restore callback from registry by key
+          injectLoaderOpts.targets = [];
 
-            injectLoaderOpts.targetsCallbackEnabled = true;
-            injectLoaderOpts.targetsCallbackKey = callbackKey;
-            injectLoaderOpts.allowTargetsCallbackInDebug = true;
-            // keep loader options serializable and restore callback from registry by key
-            injectLoaderOpts.targets = [];
-
-            if (debug) {
-              console.log("[TRACER] targets callback enabled in debug mode");
-            }
-          } else {
-            if (debug) {
-              console.warn(
-                "[TRACER] function targets are disabled by default. Use Set/Array targets or set allowTargetsCallbackInDebug=true with debug=true."
-              );
-            }
-            // default mode: only Set/Array targets
-            injectLoaderOpts.targets = [];
+          if (debug) {
+            console.log("[TRACER] targets callback enabled in debug mode");
           }
         }
 

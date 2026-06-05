@@ -27,31 +27,21 @@ const buildLoaderKey = (opts) => {
         opts.disableWebpackLoaderCacheInWatch ? 1 : 0
     ].join('|');
     const hookSigs = [
-        opts.generateCode?.construct ? opts.generateCode.construct.toString() : "",
-        opts.generateCode?.afterClass ? opts.generateCode.afterClass.toString() : "",
-        opts.generateCode?.afterPrototypeMethod ? opts.generateCode.afterPrototypeMethod.toString() : "",
-        opts.generateCode?.afterAll ? opts.generateCode.afterAll.toString() : "",
-        opts.generateCode?.beforeEndIIFE ? opts.generateCode.beforeEndIIFE.toString() : "",
+        opts.generateCode?.onConstructor ? opts.generateCode.onConstructor.toString() : "",
+        opts.generateCode?.onAfterLastPrototypeAssign ? opts.generateCode.onAfterLastPrototypeAssign.toString() : "",
+        opts.generateCode?.onBeforeEndModule ? opts.generateCode.onBeforeEndModule.toString() : "",
     ].join("::");
     return [pluginVersion, swcVersion, targets, classConfig, flags, hookSigs].join('||');
 };
 
 const normalizeOptions = (options) => ({
     targets: (() => {
-        const allowCallback = options.allowTargetsCallbackInDebug === true && options.debug === true;
+        const allowCallback = options.targetsCallbackEnabled === true && !!options.targetsCallbackKey;
 
-        if (typeof options.targets === "function" && allowCallback) {
+        if (typeof options.targets === "function") {
             return options.targets;
         }
-        if (typeof options.targets === "function" && !allowCallback) {
-            if (options.debug) {
-                console.warn(
-                    "[TRACER] function targets are disabled by default. Use Set/Array, or enable allowTargetsCallbackInDebug=true in debug mode."
-                );
-            }
-            return new Set();
-        }
-        if (allowCallback && options.targetsCallbackEnabled && options.targetsCallbackKey) {
+        if (allowCallback) {
             const root = globalThis;
             const registry = root[TARGET_CALLBACKS_KEY] || {};
             const fn = registry[options.targetsCallbackKey];

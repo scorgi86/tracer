@@ -49,6 +49,48 @@ module.exports = {
 };
 ```
 
+## Полный список настроек `UniversalCodeInjectorPlugin`
+
+Ниже перечислены все доступные настройки плагина и вложенные параметры `injectLoaderOpts`.
+
+### Настройки плагина (верхний уровень)
+
+| Настройка | Тип | По умолчанию | Назначение |
+| --- | --- | --- | --- |
+| `enableCacheFilesystem` | `boolean` | `true` | Включает `compiler.options.cache = { type: 'filesystem' }` если в конфиге Webpack не задан `cache`. |
+| `cacheDirectory` | `string` | `<compiler.context>/.webpack-cache` | Путь к каталогу кэша webpack. |
+| `injectTracerRuntimeFirst` | `boolean` | `true` | Подключает runtime `tracer` в начало entry-цепочки через `webpack-inject-plugin` (`ENTRY_ORDER.First`). |
+| `injectLoaderOpts` | `object` | — | Передаёт опции в `SWCInjectLoader` и включает трансформацию файлов через `/\.js$/` правило. Если не задано, плагин только подключает runtime. |
+| `listInjectPluginOptions` | `Array<{ options, files }>` | `undefined` | Дополнительные инъекции через `webpack-inject-plugin`: для каждого элемента `files` объединяются и вставляются с параметрами `options`. |
+| `logWatchTimings` | `boolean` | `true` | Логирует сводку пересборки (`files`, `transformed`, время), когда включён watch. |
+
+### `injectLoaderOpts`
+
+| Настройка | Тип | По умолчанию | Назначение |
+| --- | --- | --- | --- |
+| `targets` | `Set<string> | Array<string> | function` | `new Set()` | Список/множество имён классов и функций или функция `({className}) => boolean`/`(targetName) => boolean` для фильтрации. |
+| `generateCode` | `object` | `{ construct: () => '' }` | Набор хук-функций для вставки кода (`construct`, `afterClass`, `afterPrototypeMethod`, `afterAll`, `beforeEndIIFE`). |
+| `classConfig` | `Map` | `new Map()` | Расширяемая конфигурация класса (в текущей версии почти не используется, оставлена для совместимости/расширения). |
+| `trackPrototypes` | `boolean` | `true` | Флаг управления трекингом прототипов (в текущей версии напрямую не влияет на поведение). |
+| `trackInheritance` | `boolean` | `true` | Флаг управления унаследованными типами (в текущей версии напрямую не влияет на поведение). |
+| `insertPosition` | `'start' \| 'end'` | `'end'` | Где вставлять сгенерированный код в конструкторе/функции. |
+| `fallbackOnError` | `boolean` | `false` | Если `false`, ошибки трансформации падают сборку; если `true`, возвращается исходный `source` и сборка продолжается. |
+| `debug` | `boolean` | `false` | Включает диагностические логи плагина и лоадера (кроме debug-only защиты callback-ов для `targets`). |
+| `allowTargetsCallbackInDebug` | `boolean` | `false` | Разрешает `targets` как функцию в `debug`-режиме; без этого callback-типа в debug игнорируется. |
+| `disableProcessCache` | `boolean` | `false` | Полностью отключает процессный кеш трансформаций. |
+| `disableProcessCacheInWatch` | `boolean` | `true`? | При watch-режиме принудительно включает `disableProcessCache` (если явно не `false`). |
+| `disableWebpackLoaderCacheInWatch` | `boolean` | `false` | Отключает `cacheable` в лоадере во время watch (чтобы свежие пересчёты не брались из лоадер-кэша). |
+
+### Параметры хука `generateCode`
+
+| Хук | Аргументы | Что делает |
+| --- | --- | --- |
+| `construct` | `{ className, hasInstanceMethodsOnThis }` | Код, который вставляется в конструктор класса/функции. |
+| `afterClass` | `{ className }` | Код после декларации класса (`ClassDeclaration`) целевой сущности. |
+| `afterPrototypeMethod` | `{ className, methodName }` | Код после последнего найденного прототипного метода класса. |
+| `afterAll` | `{ filePath, moduleSymbols, hasIIFE }` | Код в конце модуля, если в файле нет top-level IIFE. |
+| `beforeEndIIFE` | `{ filePath, moduleSymbols, hasIIFE }` | Код перед закрытием top-level IIFE, если IIFE есть. |
+
 ## Как использовать на примерах
 
 ### Пример 1. Вставка `Tracer.observeProperty` в выбранные классы
@@ -197,6 +239,62 @@ class UserService {
   }
 }
 ```
+
+## Что означает автогенерированный блок фасада Tracer
+
+Плагин добавляет небольшой сгенерированный блок, похожий на этот:
+
+```js
+(() => {
+  const g = typeof globalThis !== "undefined" ? globalThis : (typeof window !== "undefined" ? window : undefined);
+  if (!g) return;
+  if (g.Tracer && g.Tracer.__isTracerFacade !== true) {
+    return;
+  }
+  const pendingKey = "__WEBPACK_TRACER_PENDING_CALLS__";
+  g[pendingKey] = Array.isArray(g[pendingKey]) ? g[pendingKey] : [];
+  if (g.Tracer && g.Tracer.__isTracerFacade === true) {
+    return;
+  }
+  const facade = new Proxy({ __isTracerFacade: true }, {
+    get(target, prop) {
+      if (prop === "__isTracerFacade") return true;
+      return function(...args) {
+        const runtime = g.__WEBPACK_TRACER_RUNTIME_INSTANCE__;
+        const tracer = runtime && runtime.__isTracerFacade !== true ? runtime : null;
+        if (tracer && typeof tracer[prop] === "function") {
+          return tracer[prop](...args);
+        }
+        g[pendingKey].push([prop, args]);
+        return undefined;
+      };
+    }
+  });
+  g.Tracer = facade;
+  if (typeof window !== "undefined") {
+    window.Tracer = facade;
+  }
+})();
+```
+
+Где это берётся из кода:
+- Этот код создаётся в `SWCInjectLoader.getTracerFacadeCode()` и вставляется перед сгенерированными хуками через `getObserverStatements`.
+- По сути это защитный слой, который делает вызовы `Tracer.*` безопасными до того, как подключится runtime.
+
+Почему он нужен:
+1. `generateCode.construct` может вставлять `Tracer.observe(...)` в код, который исполняется раньше инициализации runtime.
+2. Если runtime ещё не загружен, вызовы не должны ломать приложение.
+3. Эти вызовы нужно не потерять, а отложить.
+
+Как работает:
+- Если `window/globalThis.Tracer` уже инициализирован не как фасад (`__isTracerFacade !== true`), блок ничего не делает.
+- Если `Tracer` отсутствует или это ещё не инициализированный runtime, создаётся `Proxy`.
+- Каждый вызов `Tracer.foo(...)`:
+  - пробует сразу вызвать настоящий runtime (`__WEBPACK_TRACER_RUNTIME_INSTANCE__`),
+  - иначе кладёт `[foo, args]` в `window.__WEBPACK_TRACER_PENDING_CALLS__`.
+- Когда runtime `tracer` грузится, очередь из `__WEBPACK_TRACER_PENDING_CALLS__` может быть обработана bootstrap-кодом.
+
+Итог: это даёт порядок «безопасно сейчас + выполнить позже», чтобы не ломать ранний код инъекций и не терять события/вызовы.
 
 ## Схема с принципом работы плагина
 
