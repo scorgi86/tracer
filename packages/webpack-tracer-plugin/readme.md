@@ -80,6 +80,70 @@ new UniversalCodeInjectorPlugin({
 });
 ```
 
+### `generateCode` и доступные хуки
+
+В `injectLoaderOpts.generateCode` можно передать до пяти хуков. Каждый хук получает объект с параметрами и может вернуть строку, которая будет вставлена в итоговый код.
+
+```js
+new UniversalCodeInjectorPlugin({
+  injectLoaderOpts: {
+    generateCode: {
+      construct: ({ className, hasInstanceMethodsOnThis }) => `Tracer.observeProperty(this, 'id', '${className}');`,
+      afterClass: ({ className }) => `globalThis.__afterClass('${className}');`,
+      afterPrototypeMethod: ({ className, methodName }) => `globalThis.__afterPrototype('${className}', '${methodName}');`,
+      afterAll: ({ filePath, moduleSymbols, hasIIFE }) =>
+        `globalThis.__afterAll('${filePath}', ${hasIIFE}, ${JSON.stringify(moduleSymbols.classes)});`,
+      beforeEndIIFE: ({ filePath, moduleSymbols, hasIIFE }) =>
+        `globalThis.__beforeEndIIFE('${filePath}', ${hasIIFE}, ${JSON.stringify(moduleSymbols.functions)});`
+    }
+  }
+});
+```
+
+Таблица параметров и места вставки:
+
+| Хук | Параметры | Куда вставляется код |
+| --- | --- | --- |
+| `construct` | `className`<br/>`hasInstanceMethodsOnThis` | В тело конструктора целевого класса или в тело целевой функции. Если класс без конструктора, создаётся конструктор и туда вставляется код. Для классов вставка идёт в начало/конец конструктора по `insertPosition` (`start`/`end`). |
+| `afterClass` | `className` | Как отдельное statement в контейнере AST сразу после `ClassDeclaration` целевого класса. |
+| `afterPrototypeMethod` | `className`, `methodName` | После последнего найденного присваивания прототипного метода целевого класса (`C.prototype.m = ...`, скобочные и object-style варианты), в тот же контейнер после этой инструкции. |
+| `afterAll` | `filePath`, `moduleSymbols`, `hasIIFE` | В модульный уровень: добавляется в конец `ast.body`, когда top-level IIFE отсутствует. `moduleSymbols` содержит списки найденных в модуле символов верхнего уровня (`constructors`, `classes`, `functions`), `hasIIFE = false`. |
+| `beforeEndIIFE` | `filePath`, `moduleSymbols`, `hasIIFE` | В тело top-level IIFE, перед его закрытием (`findBeforeEndIndex`). `moduleSymbols` собираются из верхнего уровня этой IIFE, `hasIIFE = true`. |
+
+Примечание по `construct`: параметр `hasInstanceMethodsOnThis` равен `true`, если в верхнем уровне конструктора/функции есть присваивание вида `this.<prop> = ...`.
+
+Краткое итоговое правило:
+
+- `afterAll` выполняется в конце JS-модуля (вставка в конец `ast.body`) и только когда top-level IIFE отсутствует.
+- `beforeEndIIFE` выполняется только при наличии top-level IIFE и вставляется в конец IIFE перед `})();` (в таком файле `afterAll` для того же вызова не добавляется).
+- `afterPrototypeMethod` выполняется после последнего найденного определения метода на прототипе целевого класса.
+- `afterClass` выполняется для каждого ES6 `class`-объявления целевого класса.
+
+## Формат `moduleSymbols`
+
+`moduleSymbols` — это объект со списками имён, найденных на верхнем уровне анализируемого блока:
+
+```js
+{
+  constructors: string[],
+  classes: string[],
+  functions: string[],
+}
+```
+
+Как формируется:
+
+- Для `afterAll` (`hasIIFE: false`) список собирается по `ast.body` модуля.
+- Для `beforeEndIIFE` (`hasIIFE: true`) список собирается по телу top-level IIFE.
+
+Что туда попадает:
+
+- `constructors`: имена классов и/или функций, которые рассматриваются как конструкторы целевых сущностей.
+- `classes`: имена `class`-объявлений на верхнем уровне блока.
+- `functions`: имена function-объявлений на верхнем уровне блока.
+
+Важно: это только верхний уровень анализируемого контейнера (без глубокого сканирования вложенных блоков и вложенных функций).
+
 ### Пример 2. Подключение runtime-файла трассера в бандл
 
 ```js
@@ -155,7 +219,7 @@ flowchart TD
 ## Описание крайних случаев
 
 - `targets` пустой или не задан: модуль возвращается без изменений.
-- `generateCode.construct` вернул пустую строку: инъекция для этого класса/функции не выполняется.
+- `generateCode`-хук вернул пустую строку/`undefined`: инъекция для конкретного вхождения не выполняется.
 - Класс/функция не найден(а) в файле: файл проходит без изменений.
 - Ошибка AST-трансформации: включается fallback на строковую трансформацию.
 - Ошибка в loader:
