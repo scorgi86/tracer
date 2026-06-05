@@ -50,7 +50,7 @@ describe('InjectConstructorCodePlugin', () => {
                 //     code: ({ propList }) => { return 'window.api = this;' }
                 //   },
                 // },
-                construct: ({ className }) => {
+                onConstructor: ({ className }) => {
                     let code = '';
                     // const propsList = targetsConfig[className];
 

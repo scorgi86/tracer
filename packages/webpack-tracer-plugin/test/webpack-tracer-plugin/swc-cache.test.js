@@ -5,7 +5,7 @@ describe("SWCInjectLoader cache", () => {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className }) => `window.__cache_test='${className}';`
+                onConstructor: ({ className }) => `window.__cache_test='${className}';`
             }
         });
 
@@ -29,7 +29,7 @@ describe("SWCInjectLoader cache", () => {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className }) => `window.__cache_test='${className}';`
+                onConstructor: ({ className }) => `window.__cache_test='${className}';`
             }
         });
 
@@ -54,7 +54,7 @@ describe("SWCInjectLoader cache", () => {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className }) => `window.__cache_test='${className}';`
+                onConstructor: ({ className }) => `window.__cache_test='${className}';`
             }
         });
 
@@ -70,7 +70,7 @@ describe("SWCInjectLoader cache", () => {
         const first = await loader.processCode(source, filePath);
         loader.updateOptions({
             generateCode: {
-                construct: ({ className }) => `window.__cache_test_2='${className}';`
+                onConstructor: ({ className }) => `window.__cache_test_2='${className}';`
             }
         });
         const second = await loader.processCode(source, filePath);
@@ -83,14 +83,14 @@ describe("SWCInjectLoader cache", () => {
         const loaderA = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                afterAll: () => "globalThis.__hook_sig = 'A';"
+                onBeforeEndModule: () => "globalThis.__hook_sig = 'A';"
             }
         });
 
         const loaderB = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                afterAll: () => "globalThis.__hook_sig = 'B';"
+                onBeforeEndModule: () => "globalThis.__hook_sig = 'B';"
             }
         });
 
@@ -105,7 +105,7 @@ describe("SWCInjectLoader cache", () => {
             targetsCallbackKey: "cb-A",
             allowTargetsCallbackInDebug: true,
             generateCode: {
-                construct: ({ className }) => `globalThis.__cache_target='${className}';`
+                onConstructor: ({ className }) => `globalThis.__cache_target='${className}';`
             }
         });
 
@@ -115,7 +115,7 @@ describe("SWCInjectLoader cache", () => {
             targetsCallbackKey: "cb-B",
             allowTargetsCallbackInDebug: true,
             generateCode: {
-                construct: ({ className }) => `globalThis.__cache_target='${className}';`
+                onConstructor: ({ className }) => `globalThis.__cache_target='${className}';`
             }
         });
 

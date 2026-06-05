@@ -1,28 +1,46 @@
 const SWCInjectLoader = require("../../src/SWCInjectLoader.js");
 
 describe("SWCInjectLoader hooks", () => {
-    test("injects code right after class declaration", async () => {
+    test("injects onConstructor into class constructor", async () => {
         const source = `
 class CEditorPage {
   constructor() {}
 }
-const after = 1;
         `.trim();
 
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                afterClass: ({ className }) => `globalThis.__afterClass='${className}';`
+                onConstructor: ({ className }) =>
+                    `globalThis.__onConstructor='${className}';`
             }
         });
 
-        const result = await loader.processCode(source, "C:/tmp/after-class.js");
-        const classPos = result.indexOf("class CEditorPage");
-        const hookPos = result.indexOf("globalThis.__afterClass");
-        const afterPos = result.indexOf("const after = 1");
+        const result = await loader.processCode(source, "C:/tmp/on-constructor-class.js");
 
-        expect(hookPos).toBeGreaterThan(classPos);
-        expect(afterPos).toBeGreaterThan(hookPos);
+        expect(result.includes("__onConstructor")).toBe(true);
+        expect(result.includes("__onConstructor = 'CEditorPage'")).toBe(true);
+    });
+
+    test("injects onConstructor into function constructor", async () => {
+        const source = `
+function CEditorPage() {
+  this.value = 1;
+}
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className, hasInstanceMethodsOnThis }) =>
+                    `globalThis.__onFunctionCtor='${className}:${hasInstanceMethodsOnThis}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/on-constructor-function.js");
+
+        expect(result.includes("__onFunctionCtor")).toBe(true);
+        expect(result.includes("__onFunctionCtor = 'CEditorPage:false'")).toBe(true);
     });
 
     test("injects code after last prototype method assignment", async () => {
@@ -36,7 +54,7 @@ const after = 1;
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                afterPrototypeMethod: ({ className, methodName }) =>
+                onAfterLastPrototypeAssign: ({ className, methodName }) =>
                     `globalThis.__afterPrototype='${className}:${methodName}';`
             }
         });
@@ -47,7 +65,7 @@ const after = 1;
         const afterPos = result.indexOf("const after = 1");
 
         expect(result.includes("__afterPrototype")).toBe(true);
-        expect(result.includes("CEditorPage:second")).toBe(true);
+        expect(result.includes("__afterPrototype = 'CEditorPage:second'")).toBe(true);
         expect(hookPos).toBeGreaterThan(lastMethodPos);
         expect(afterPos).toBeGreaterThan(hookPos);
     });
@@ -65,7 +83,7 @@ const after = 1;
         const loader = new SWCInjectLoader({
             targets: new Set(["CGraphics"]),
             generateCode: {
-                afterPrototypeMethod: ({ className, methodName }) =>
+                onAfterLastPrototypeAssign: ({ className, methodName }) =>
                     `globalThis.__afterPrototypeObject='${className}:${methodName}';`
             }
         });
@@ -75,7 +93,7 @@ const after = 1;
         const hookPos = result.indexOf("globalThis.__afterPrototypeObject");
         const afterPos = result.indexOf("const after = 1");
 
-        expect(result.includes("CGraphics:EndDraw")).toBe(true);
+        expect(result.includes("__afterPrototypeObject = 'CGraphics:EndDraw'")).toBe(true);
         expect(hookPos).toBeGreaterThan(prototypeDeclPos);
         expect(afterPos).toBeGreaterThan(hookPos);
     });
@@ -89,7 +107,7 @@ const after = 1;
         const loader = new SWCInjectLoader({
             targets: new Set(["window.asc_docs_api"]),
             generateCode: {
-                afterPrototypeMethod: ({ className, methodName }) =>
+                onAfterLastPrototypeAssign: ({ className, methodName }) =>
                     `globalThis.__afterWindowProto='${className}:${methodName}';`
             }
         });
@@ -114,14 +132,14 @@ function CEditorPage() {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className, hasInstanceMethodsOnThis }) =>
+                onConstructor: ({ className, hasInstanceMethodsOnThis }) =>
                     `globalThis.__constructFlag='${className}:${hasInstanceMethodsOnThis}';`
             }
         });
 
         const result = await loader.processCode(source, "C:/tmp/construct-flag.js");
         expect(result.includes("__constructFlag")).toBe(true);
-        expect(result.includes("CEditorPage:true")).toBe(true);
+        expect(result.includes("__constructFlag = 'CEditorPage:true'")).toBe(true);
     });
 
     test("hasInstanceMethodsOnThis does not scan nested blocks", async () => {
@@ -136,7 +154,7 @@ function CEditorPage() {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className, hasInstanceMethodsOnThis }) =>
+                onConstructor: ({ className, hasInstanceMethodsOnThis }) =>
                     `globalThis.__constructNested='${className}:${hasInstanceMethodsOnThis}';`
             }
         });
@@ -154,7 +172,7 @@ function CEditorPage() {}
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: () => `window.Tracer.observePrototype(undefined);`
+                onConstructor: () => `window.Tracer.observePrototype(undefined);`
             }
         });
 
@@ -170,14 +188,14 @@ function CEditorPage() {}
         const loaderNull = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: () => `window.Tracer.observePrototype(null);`
+                onConstructor: () => `window.Tracer.observePrototype(null);`
             }
         });
 
         const loaderString = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: () => `window.Tracer.observePrototype("undefined");`
+                onConstructor: () => `window.Tracer.observePrototype("undefined");`
             }
         });
 
@@ -196,11 +214,65 @@ function CEditorPage() {}
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: () => `window.Tracer.observePrototype('undefined');`
+                onConstructor: () => `window.Tracer.observePrototype('undefined');`
             }
         });
 
         const result = await loader.processCode(source, "C:/tmp/unsafe-single-quoted-string.js");
         expect(result.includes("observePrototype('undefined')")).toBe(false);
+    });
+
+    test("supports targets as function without debug gate", async () => {
+        const source = `
+class CEditorPage {
+  constructor() {}
+}
+class BasePage {
+  constructor() {}
+}
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: (targetName) => /^C[A-Z].*/.test(String(targetName)),
+            generateCode: {
+                onConstructor: ({ className }) => `globalThis.__fnTargets='${className}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/function-targets.js");
+
+        expect(result.includes("__fnTargets = 'CEditorPage'")).toBe(true);
+        expect(result.includes("__fnTargets = 'BasePage'")).toBe(false);
+    });
+
+    test("covers Format.js-style prototype flow", async () => {
+        const source = `
+function CBaseObject() {
+  this.Id = null;
+}
+InitClass(CBaseObject, CBaseNoIdObject, 0);
+CBaseObject.prototype.isGlobalSkipAddId = function () {
+  return false;
+};
+function CT_Hyperlink() {
+  CBaseNoIdObject.call(this);
+}
+CT_Hyperlink.prototype.Write_ToBinary = function () {
+  return 1;
+};
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: (targetName) => /^C[A-Z].*/.test(String(targetName)),
+            generateCode: {
+                onAfterLastPrototypeAssign: ({ className }) =>
+                    `window.Tracer.observePrototype(${className}, '${className}');`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/format-style.js");
+
+        expect(result.includes("window.Tracer.observePrototype(CBaseObject, 'CBaseObject');")).toBe(true);
+        expect(result.includes("window.Tracer.observePrototype(CT_Hyperlink, 'CT_Hyperlink');")).toBe(true);
     });
 });

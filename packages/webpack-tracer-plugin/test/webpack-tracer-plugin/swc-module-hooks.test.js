@@ -1,7 +1,7 @@
 const SWCInjectLoader = require("../../src/SWCInjectLoader.js");
 
 describe("SWCInjectLoader module-level hooks", () => {
-    test("uses afterAll when file has no IIFE", async () => {
+    test("uses onBeforeEndModule when file has no IIFE", async () => {
         const source = `
 function CEditorPage() {}
 CEditorPage.prototype.init = function() { return 1; };
@@ -10,17 +10,17 @@ CEditorPage.prototype.init = function() { return 1; };
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                afterAll: ({ hasIIFE, moduleSymbols }) =>
-                    `globalThis.__afterAll='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
+                onBeforeEndModule: ({ hasIIFE, moduleSymbols }) =>
+                    `globalThis.__beforeEndModule='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
             }
         });
 
         const result = await loader.processCode(source, "C:/tmp/module-no-iife.js");
-        expect(result.includes("__afterAll")).toBe(true);
-        expect(result.includes("false:CEditorPage")).toBe(true);
+        expect(result.includes("__beforeEndModule")).toBe(true);
+        expect(result.includes("__beforeEndModule = 'false:CEditorPage'")).toBe(true);
     });
 
-    test("uses beforeEndIIFE when file has top-level IIFE", async () => {
+    test("uses onBeforeEndModule when file has top-level IIFE", async () => {
         const source = `
 (function() {
   function CEditorPage() {}
@@ -31,17 +31,17 @@ CEditorPage.prototype.init = function() { return 1; };
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                beforeEndIIFE: ({ hasIIFE, moduleSymbols }) =>
-                    `globalThis.__beforeEndIIFE='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
+                onBeforeEndModule: ({ hasIIFE, moduleSymbols }) =>
+                    `globalThis.__beforeEndModuleIife='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
             }
         });
 
         const result = await loader.processCode(source, "C:/tmp/module-iife.js");
-        expect(result.includes("__beforeEndIIFE")).toBe(true);
-        expect(result.includes("true:CEditorPage")).toBe(true);
+        expect(result.includes("__beforeEndModuleIife")).toBe(true);
+        expect(result.includes("__beforeEndModuleIife = 'true:CEditorPage'")).toBe(true);
     });
 
-    test("beforeEndIIFE collects only top-level symbols of IIFE body", async () => {
+    test("onBeforeEndModule collects only top-level symbols of IIFE body", async () => {
         const source = `
 (function() {
   function CEditorPage() {}
@@ -56,7 +56,7 @@ CEditorPage.prototype.init = function() { return 1; };
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                beforeEndIIFE: ({ moduleSymbols }) =>
+                onBeforeEndModule: ({ moduleSymbols }) =>
                     `globalThis.__ctors='${(moduleSymbols.constructors || []).join("|")}';`
             }
         });
@@ -77,15 +77,15 @@ function NotATarget() {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
             generateCode: {
-                construct: ({ className }) => `globalThis.__construct='${className}';`,
-                afterAll: ({ hasIIFE, moduleSymbols }) =>
-                    `globalThis.__afterAllFallback='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
+                onConstructor: ({ className }) => `globalThis.__construct='${className}';`,
+                onBeforeEndModule: ({ hasIIFE, moduleSymbols }) =>
+                    `globalThis.__beforeEndModuleFallback='${hasIIFE}:${moduleSymbols.constructors.join("|")}';`
             }
         });
 
         const result = await loader.processCode(source, "C:/tmp/module-precheck-fallback.js");
         expect(result.includes("__construct")).toBe(false);
-        expect(result.includes("__afterAllFallback")).toBe(true);
+        expect(result.includes("__beforeEndModuleFallback")).toBe(true);
         expect(result.includes("false:NotATarget")).toBe(true);
     });
 });

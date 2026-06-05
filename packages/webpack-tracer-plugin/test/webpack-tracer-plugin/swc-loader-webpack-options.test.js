@@ -34,34 +34,32 @@ class CEditorPage {
         delete globalThis.__WEBPACK_TRACER_TARGET_CALLBACKS__;
     });
 
-    test("disables function targets by default", async () => {
+    test("allows function targets without debug mode", async () => {
         const { result } = await runLoader({
             source,
             options: {
                 targets: (name) => name === "CEditorPage",
                 generateCode: {
-                    construct: () => "globalThis.__fnTargetsDefaultOff = true;"
+                    onConstructor: () => "globalThis.__fnTargetsEnabled = true;"
                 }
             }
         });
 
-        expect(result.includes("__fnTargetsDefaultOff")).toBe(false);
+        expect(result.includes("__fnTargetsEnabled")).toBe(true);
     });
 
-    test("allows function targets only in debug mode with explicit flag", async () => {
+    test("does not transform non-matching function targets", async () => {
         const { result } = await runLoader({
             source,
             options: {
-                debug: true,
-                allowTargetsCallbackInDebug: true,
-                targets: (name) => name === "CEditorPage",
+                targets: (name) => name === "BasePage",
                 generateCode: {
-                    construct: () => "globalThis.__fnTargetsDebugOn = true;"
+                    onConstructor: () => "globalThis.__fnTargetsMiss = true;"
                 }
             }
         });
 
-        expect(result.includes("__fnTargetsDebugOn")).toBe(true);
+        expect(result.includes("__fnTargetsMiss")).toBe(false);
     });
 
     test("disables webpack loader cache in watch mode by default", async () => {
@@ -71,7 +69,7 @@ class CEditorPage {
             options: {
                 targets: ["CEditorPage"],
                 generateCode: {
-                    construct: () => "globalThis.__watchCacheOff = true;"
+                    onConstructor: () => "globalThis.__watchCacheOff = true;"
                 }
             }
         });
@@ -87,11 +85,45 @@ class CEditorPage {
                 disableWebpackLoaderCacheInWatch: false,
                 targets: ["CEditorPage"],
                 generateCode: {
-                    construct: () => "globalThis.__watchCacheOn = true;"
+                    onConstructor: () => "globalThis.__watchCacheOn = true;"
                 }
             }
         });
 
         expect(cacheableCalls[0]).toBe(true);
+    });
+
+    test("passes targets callback through callback registry key", async () => {
+        const { result } = await runLoader({
+            source,
+            options: {
+                targets: [],
+                targetsCallbackEnabled: true,
+                targetsCallbackKey: "cb-CEditorPage",
+                generateCode: {
+                    onConstructor: () => "globalThis.__callbackRegistry = true;"
+                }
+            }
+        });
+
+        expect(result.includes("__callbackRegistry")).toBe(false);
+
+        globalThis.__WEBPACK_TRACER_TARGET_CALLBACKS__ = {
+            "cb-CEditorPage": (name) => name === "CEditorPage"
+        };
+
+        const secondRun = await runLoader({
+            source,
+            options: {
+                targets: [],
+                targetsCallbackEnabled: true,
+                targetsCallbackKey: "cb-CEditorPage",
+                generateCode: {
+                    onConstructor: () => "globalThis.__callbackRegistry = true;"
+                }
+            }
+        });
+
+        expect(secondRun.result.includes("__callbackRegistry")).toBe(true);
     });
 });
