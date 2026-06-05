@@ -37,9 +37,8 @@ module.exports = {
       injectLoaderOpts: {
         targets: ['UserService', 'OrderService'],
         fallbackOnError: false,
-        debug: false,
         generateCode: {
-          construct: ({ className }) => {
+          onConstructor: ({ className }) => {
             return `Tracer.observeProperty(this, 'id', '${className}');`;
           }
         }
@@ -48,6 +47,60 @@ module.exports = {
   ]
 };
 ```
+
+### Простой пример с `targets` как функцией
+
+Ниже минимальный вариант, повторяющий рабочую схему из `sdkjs`, но без лишней project-specific логики:
+
+```js
+const path = require('node:path');
+const { UniversalCodeInjectorPlugin } = require('webpack-tracer-plugin');
+
+function isTargetClass(targetName = '') {
+  return /^C[A-Z].*/.test(String(targetName));
+}
+
+module.exports = {
+  mode: 'development',
+  entry: './src/index.js',
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: 'bundle.js'
+  },
+  plugins: [
+    new UniversalCodeInjectorPlugin({
+      enableCacheFilesystem: true,
+      cacheDirectory: path.resolve(__dirname, '.webpack-cache'),
+      injectLoaderOpts: {
+        targets: (targetName = '') => isTargetClass(targetName),
+        fallbackOnError: false,
+        generateCode: {
+          onConstructor: ({ className, hasInstanceMethodsOnThis }) => {
+            return hasInstanceMethodsOnThis
+              ? `Tracer.observe(this, '${className}');`
+              : '';
+          },
+          onAfterLastPrototypeAssign: ({ className }) => {
+            return `Tracer.observePrototype(${className}, '${className}');`;
+          },
+          onBeforeEndModule: ({ moduleSymbols }) => {
+            return moduleSymbols.classes
+              .map((className) => `Tracer.observePrototype(${className}, '${className}');`)
+              .join('\n');
+          }
+        }
+      }
+    })
+  ]
+};
+```
+
+Что делает этот пример:
+
+- `targets` как функция выбирает только имена вида `/^C[A-Z].*/`
+- `onConstructor` добавляет `Tracer.observe(this, className)`, только если в конструкторе есть методы, назначенные на `this`
+- `onAfterLastPrototypeAssign` ставит наблюдение после последнего `ClassName.prototype.method = ...`
+- `onBeforeEndModule` проходит по `moduleSymbols.classes` и добавляет `observePrototype` для классов верхнего уровня
 
 ## Полный список настроек `UniversalCodeInjectorPlugin`
 
@@ -69,14 +122,13 @@ module.exports = {
 | Настройка | Тип | По умолчанию | Назначение |
 | --- | --- | --- | --- |
 | `targets` | `Set<string> | Array<string> | function` | `new Set()` | Список/множество имён классов и функций или функция `({className}) => boolean`/`(targetName) => boolean` для фильтрации. |
-| `generateCode` | `object` | `{ construct: () => '' }` | Набор хук-функций для вставки кода (`construct`, `afterClass`, `afterPrototypeMethod`, `afterAll`, `beforeEndIIFE`). |
+| `generateCode` | `object` | `{ onConstructor: () => '' }` | Набор хук-функций для вставки кода (`onConstructor`, `onAfterLastPrototypeAssign`, `onBeforeEndModule`). |
 | `classConfig` | `Map` | `new Map()` | Расширяемая конфигурация класса (в текущей версии почти не используется, оставлена для совместимости/расширения). |
 | `trackPrototypes` | `boolean` | `true` | Флаг управления трекингом прототипов (в текущей версии напрямую не влияет на поведение). |
 | `trackInheritance` | `boolean` | `true` | Флаг управления унаследованными типами (в текущей версии напрямую не влияет на поведение). |
 | `insertPosition` | `'start' \| 'end'` | `'end'` | Где вставлять сгенерированный код в конструкторе/функции. |
 | `fallbackOnError` | `boolean` | `false` | Если `false`, ошибки трансформации падают сборку; если `true`, возвращается исходный `source` и сборка продолжается. |
 | `debug` | `boolean` | `false` | Включает диагностические логи плагина и лоадера (кроме debug-only защиты callback-ов для `targets`). |
-| `allowTargetsCallbackInDebug` | `boolean` | `false` | Разрешает `targets` как функцию в `debug`-режиме; без этого callback-типа в debug игнорируется. |
 | `disableProcessCache` | `boolean` | `false` | Полностью отключает процессный кеш трансформаций. |
 | `disableProcessCacheInWatch` | `boolean` | `true`? | При watch-режиме принудительно включает `disableProcessCache` (если явно не `false`). |
 | `disableWebpackLoaderCacheInWatch` | `boolean` | `false` | Отключает `cacheable` в лоадере во время watch (чтобы свежие пересчёты не брались из лоадер-кэша). |
@@ -85,11 +137,9 @@ module.exports = {
 
 | Хук | Аргументы | Что делает |
 | --- | --- | --- |
-| `construct` | `{ className, hasInstanceMethodsOnThis }` | Код, который вставляется в конструктор класса/функции. |
-| `afterClass` | `{ className }` | Код после декларации класса (`ClassDeclaration`) целевой сущности. |
-| `afterPrototypeMethod` | `{ className, methodName }` | Код после последнего найденного прототипного метода класса. |
-| `afterAll` | `{ filePath, moduleSymbols, hasIIFE }` | Код в конце модуля, если в файле нет top-level IIFE. |
-| `beforeEndIIFE` | `{ filePath, moduleSymbols, hasIIFE }` | Код перед закрытием top-level IIFE, если IIFE есть. |
+| `onConstructor` | `{ className, hasInstanceMethodsOnThis }` | Код, который вставляется в конструктор класса/функции. |
+| `onAfterLastPrototypeAssign` | `{ className, methodName }` | Код после последнего найденного прототипного метода класса. |
+| `onBeforeEndModule` | `{ filePath, moduleSymbols, hasIIFE }` | Код в конце модуля или перед завершением top-level IIFE, в зависимости от структуры файла. |
 
 ## Как использовать на примерах
 
@@ -102,7 +152,7 @@ new UniversalCodeInjectorPlugin({
   injectLoaderOpts: {
     targets: ['UserService', 'PaymentService'],
     generateCode: {
-      construct: ({ className }) => {
+      onConstructor: ({ className }) => {
         return [
           `Tracer.observeProperty(this, 'state', '${className}');`,
           `Tracer.observeProperty(this, 'status', '${className}');`
@@ -124,19 +174,18 @@ new UniversalCodeInjectorPlugin({
 
 ### `generateCode` и доступные хуки
 
-В `injectLoaderOpts.generateCode` можно передать до пяти хуков. Каждый хук получает объект с параметрами и может вернуть строку, которая будет вставлена в итоговый код.
+В `injectLoaderOpts.generateCode` можно передать три хука. Каждый хук получает объект с параметрами и может вернуть строку, которая будет вставлена в итоговый код.
 
 ```js
 new UniversalCodeInjectorPlugin({
   injectLoaderOpts: {
     generateCode: {
-      construct: ({ className, hasInstanceMethodsOnThis }) => `Tracer.observeProperty(this, 'id', '${className}');`,
-      afterClass: ({ className }) => `globalThis.__afterClass('${className}');`,
-      afterPrototypeMethod: ({ className, methodName }) => `globalThis.__afterPrototype('${className}', '${methodName}');`,
-      afterAll: ({ filePath, moduleSymbols, hasIIFE }) =>
-        `globalThis.__afterAll('${filePath}', ${hasIIFE}, ${JSON.stringify(moduleSymbols.classes)});`,
-      beforeEndIIFE: ({ filePath, moduleSymbols, hasIIFE }) =>
-        `globalThis.__beforeEndIIFE('${filePath}', ${hasIIFE}, ${JSON.stringify(moduleSymbols.functions)});`
+      onConstructor: ({ className, hasInstanceMethodsOnThis }) =>
+        `Tracer.observeProperty(this, 'id', '${className}');`,
+      onAfterLastPrototypeAssign: ({ className, methodName }) =>
+        `globalThis.__afterPrototype('${className}', '${methodName}');`,
+      onBeforeEndModule: ({ filePath, moduleSymbols, hasIIFE }) =>
+        `globalThis.__beforeEndModule('${filePath}', ${hasIIFE}, ${JSON.stringify(moduleSymbols.functions)});`
     }
   }
 });
@@ -146,20 +195,17 @@ new UniversalCodeInjectorPlugin({
 
 | Хук | Параметры | Куда вставляется код |
 | --- | --- | --- |
-| `construct` | `className`<br/>`hasInstanceMethodsOnThis` | В тело конструктора целевого класса или в тело целевой функции. Если класс без конструктора, создаётся конструктор и туда вставляется код. Для классов вставка идёт в начало/конец конструктора по `insertPosition` (`start`/`end`). |
-| `afterClass` | `className` | Как отдельное statement в контейнере AST сразу после `ClassDeclaration` целевого класса. |
-| `afterPrototypeMethod` | `className`, `methodName` | После последнего найденного присваивания прототипного метода целевого класса (`C.prototype.m = ...`, скобочные и object-style варианты), в тот же контейнер после этой инструкции. |
-| `afterAll` | `filePath`, `moduleSymbols`, `hasIIFE` | В модульный уровень: добавляется в конец `ast.body`, когда top-level IIFE отсутствует. `moduleSymbols` содержит списки найденных в модуле символов верхнего уровня (`constructors`, `classes`, `functions`), `hasIIFE = false`. |
-| `beforeEndIIFE` | `filePath`, `moduleSymbols`, `hasIIFE` | В тело top-level IIFE, перед его закрытием (`findBeforeEndIndex`). `moduleSymbols` собираются из верхнего уровня этой IIFE, `hasIIFE = true`. |
+| `onConstructor` | `className`<br/>`hasInstanceMethodsOnThis` | В тело конструктора целевого класса или в тело целевой функции. Если класс без конструктора, создаётся конструктор и туда вставляется код. Для классов вставка идёт в начало/конец конструктора по `insertPosition` (`start`/`end`). |
+| `onAfterLastPrototypeAssign` | `className`, `methodName` | После последнего найденного присваивания прототипного метода целевого класса (`C.prototype.m = ...`, скобочные и object-style варианты), в тот же контейнер после этой инструкции. |
+| `onBeforeEndModule` | `filePath`, `moduleSymbols`, `hasIIFE` | Если top-level IIFE нет, код добавляется в конец `ast.body`. Если top-level IIFE есть, код вставляется перед её закрытием. |
 
-Примечание по `construct`: параметр `hasInstanceMethodsOnThis` равен `true`, если в верхнем уровне конструктора/функции есть присваивание вида `this.<prop> = ...`.
+Примечание по `onConstructor`: параметр `hasInstanceMethodsOnThis` равен `true`, если в верхнем уровне конструктора/функции есть присваивание вида `this.<prop> = ...`.
 
 Краткое итоговое правило:
 
-- `afterAll` выполняется в конце JS-модуля (вставка в конец `ast.body`) и только когда top-level IIFE отсутствует.
-- `beforeEndIIFE` выполняется только при наличии top-level IIFE и вставляется в конец IIFE перед `})();` (в таком файле `afterAll` для того же вызова не добавляется).
-- `afterPrototypeMethod` выполняется после последнего найденного определения метода на прототипе целевого класса.
-- `afterClass` выполняется для каждого ES6 `class`-объявления целевого класса.
+- `onBeforeEndModule` работает и для обычного модуля, и для файла с top-level IIFE.
+- `onAfterLastPrototypeAssign` выполняется после последнего найденного определения метода на прототипе целевого класса.
+- `onConstructor` вызывается для целевого класса или функции-конструктора.
 
 ## Формат `moduleSymbols`
 
@@ -175,8 +221,8 @@ new UniversalCodeInjectorPlugin({
 
 Как формируется:
 
-- Для `afterAll` (`hasIIFE: false`) список собирается по `ast.body` модуля.
-- Для `beforeEndIIFE` (`hasIIFE: true`) список собирается по телу top-level IIFE.
+- Для `onBeforeEndModule` в обычном модуле (`hasIIFE: false`) список собирается по `ast.body`.
+- Для `onBeforeEndModule` в top-level IIFE (`hasIIFE: true`) список собирается по телу этой IIFE.
 
 Что туда попадает:
 
@@ -196,7 +242,7 @@ new UniversalCodeInjectorPlugin({
   injectLoaderOpts: {
     targets: ['UserService'],
     generateCode: {
-      construct: ({ className }) => `Tracer.observeProperty(this, 'id', '${className}');`
+      onConstructor: ({ className }) => `Tracer.observeProperty(this, 'id', '${className}');`
     }
   },
   listInjectPluginOptions: [
@@ -223,7 +269,7 @@ class UserService {
 }
 ```
 
-`generateCode.construct`:
+`generateCode.onConstructor`:
 
 ```js
 ({ className }) => `Tracer.observeProperty(this, 'id', '${className}');`
@@ -282,7 +328,7 @@ class UserService {
 - По сути это защитный слой, который делает вызовы `Tracer.*` безопасными до того, как подключится runtime.
 
 Почему он нужен:
-1. `generateCode.construct` может вставлять `Tracer.observe(...)` в код, который исполняется раньше инициализации runtime.
+1. `generateCode.onConstructor` может вставлять `Tracer.observe(...)` в код, который исполняется раньше инициализации runtime.
 2. Если runtime ещё не загружен, вызовы не должны ломать приложение.
 3. Эти вызовы нужно не потерять, а отложить.
 
@@ -308,7 +354,7 @@ flowchart TD
   F -->|No| G[Return source as is]
   F -->|Yes| H[Parse AST with SWC]
   H --> I[Find target classes and functions]
-  I --> J[Insert statements from generateCode.construct]
+  I --> J[Insert statements from generateCode.onConstructor]
   J --> K[Generate transformed code]
   K --> L[Store in in-memory cache by file content + options]
   L --> M[Return transformed module]
@@ -331,7 +377,7 @@ flowchart TD
 
 - Держите `targets` как можно уже.
 - Оставляйте `enableCacheFilesystem: true` для dev-сборок.
-- Не генерируйте очень длинные строки в `construct`.
+- Не генерируйте очень длинные строки в `onConstructor`.
 - Используйте `listInjectPluginOptions` только для реально нужных runtime-файлов.
 
 ## Экспорт из пакета

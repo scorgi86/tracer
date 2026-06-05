@@ -1,11 +1,13 @@
 const SWCInjectLoader = require("../../src/SWCInjectLoader.js");
+const fs = require("fs");
+const path = require("path");
+
+const readFixture = (name) =>
+    fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8").trim();
 
 describe("SWCInjectLoader module-level hooks", () => {
-    test("uses onBeforeEndModule when file has no IIFE", async () => {
-        const source = `
-function CEditorPage() {}
-CEditorPage.prototype.init = function() { return 1; };
-        `.trim();
+    test("uses onBeforeEndModule on permanent non-IIFE fixture", async () => {
+        const source = readFixture("module-no-iife.js");
 
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
@@ -20,13 +22,8 @@ CEditorPage.prototype.init = function() { return 1; };
         expect(result.includes("__beforeEndModule = 'false:CEditorPage'")).toBe(true);
     });
 
-    test("uses onBeforeEndModule when file has top-level IIFE", async () => {
-        const source = `
-(function() {
-  function CEditorPage() {}
-  CEditorPage.prototype.init = function() { return 1; };
-})();
-        `.trim();
+    test("uses onBeforeEndModule on permanent IIFE fixture", async () => {
+        const source = readFixture("module-with-iife.js");
 
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
@@ -39,6 +36,21 @@ CEditorPage.prototype.init = function() { return 1; };
         const result = await loader.processCode(source, "C:/tmp/module-iife.js");
         expect(result.includes("__beforeEndModuleIife")).toBe(true);
         expect(result.includes("__beforeEndModuleIife = 'true:CEditorPage'")).toBe(true);
+    });
+
+    test("passes normalized module hook context with legacy fields preserved", async () => {
+        const source = readFixture("module-with-iife.js");
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onBeforeEndModule: (ctx) =>
+                    `globalThis.__moduleCtx='${ctx.hook}:${ctx.module.hasIIFE}:${ctx.hasIIFE}:${ctx.module.filePath === ctx.filePath}:${ctx.module.symbols.constructors.join("|")}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/module-context.js");
+        expect(result.includes("__moduleCtx = 'onBeforeEndModule:true:true:true:CEditorPage'")).toBe(true);
     });
 
     test("onBeforeEndModule collects only top-level symbols of IIFE body", async () => {

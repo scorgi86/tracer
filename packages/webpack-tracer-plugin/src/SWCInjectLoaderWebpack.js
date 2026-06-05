@@ -1,9 +1,9 @@
 const SWCInjectLoader = require("./SWCInjectLoader");
 const pluginPkg = require("../package.json");
 const swcPkg = require("@swc/core/package.json");
+const normalizeOptions = require("./tracer/normalizeOptions");
 
 const loaderCache = new Map();
-const TARGET_CALLBACKS_KEY = "__WEBPACK_TRACER_TARGET_CALLBACKS__";
 const TRACER_LOADER_METRICS_KEY = "__WEBPACK_TRACER_LOADER_METRICS__";
 
 const buildLoaderKey = (opts) => {
@@ -33,44 +33,6 @@ const buildLoaderKey = (opts) => {
     ].join("::");
     return [pluginVersion, swcVersion, targets, classConfig, flags, hookSigs].join('||');
 };
-
-const normalizeOptions = (options) => ({
-    targets: (() => {
-        const allowCallback = options.targetsCallbackEnabled === true && !!options.targetsCallbackKey;
-
-        if (typeof options.targets === "function") {
-            return options.targets;
-        }
-        if (allowCallback) {
-            const root = globalThis;
-            const registry = root[TARGET_CALLBACKS_KEY] || {};
-            const fn = registry[options.targetsCallbackKey];
-            if (typeof fn === "function") {
-                return fn;
-            }
-        }
-        if (options.targets instanceof Set) {
-            return options.targets;
-        }
-        if (Array.isArray(options.targets)) {
-            return new Set(options.targets);
-        }
-        return new Set();
-    })(),
-    classConfig: new Map(Object.entries(options.classConfig || {})),
-    trackPrototypes: options.trackPrototypes !== false,
-    trackInheritance: options.trackInheritance !== false,
-    generateCode: options.generateCode,
-    insertPosition: options.insertPosition || "end",
-    debug: options.debug,
-    fallbackOnError: options.fallbackOnError === true,
-    allowTargetsCallbackInDebug: options.allowTargetsCallbackInDebug === true,
-    targetsCallbackEnabled: options.targetsCallbackEnabled === true,
-    targetsCallbackKey: options.targetsCallbackKey || "",
-    disableProcessCache: options.disableProcessCache === true,
-    disableProcessCacheInWatch: options.disableProcessCacheInWatch !== false,
-    disableWebpackLoaderCacheInWatch: options.disableWebpackLoaderCacheInWatch !== false
-});
 
 // Webpack loader
 module.exports = function(source) {

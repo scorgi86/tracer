@@ -1,12 +1,13 @@
 const SWCInjectLoader = require("../../src/SWCInjectLoader.js");
+const fs = require("fs");
+const path = require("path");
+
+const readFixture = (name) =>
+    fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8").trim();
 
 describe("SWCInjectLoader hooks", () => {
-    test("injects onConstructor into class constructor", async () => {
-        const source = `
-class CEditorPage {
-  constructor() {}
-}
-        `.trim();
+    test("injects onConstructor into HtmlPage-style constructor fixture", async () => {
+        const source = readFixture("htmlpage-constructor.js");
 
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
@@ -43,6 +44,26 @@ function CEditorPage() {
         expect(result.includes("__onFunctionCtor = 'CEditorPage:false'")).toBe(true);
     });
 
+    test("passes normalized constructor hook context with legacy fields preserved", async () => {
+        const source = `
+function CEditorPage() {
+  this.value = 1;
+}
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: (ctx) =>
+                    `globalThis.__constructorCtx='${ctx.hook}:${ctx.target.kind}:${ctx.target.name}:${ctx.className}:${ctx.hasInstanceMethodsOnThis}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/on-constructor-context.js");
+
+        expect(result.includes("__constructorCtx = 'onConstructor:constructor:CEditorPage:CEditorPage:false'")).toBe(true);
+    });
+
     test("injects code after last prototype method assignment", async () => {
         const source = `
 function CEditorPage() {}
@@ -68,6 +89,46 @@ const after = 1;
         expect(result.includes("__afterPrototype = 'CEditorPage:second'")).toBe(true);
         expect(hookPos).toBeGreaterThan(lastMethodPos);
         expect(afterPos).toBeGreaterThan(hookPos);
+    });
+
+    test("applies real prototype-wrap for function-style prototype assignments", async () => {
+        const source = `
+function CEditorPage() {}
+CEditorPage.prototype.second = function() { return 2; };
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) =>
+                    `globalThis.__prototypeWrapFn='${className}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/prototype-wrap-function.js");
+        const assignPos = result.indexOf("CEditorPage.prototype.second");
+        const observePos = result.indexOf('Tracer.observePrototype(CEditorPage, "CEditorPage")');
+
+        expect(observePos).toBeGreaterThan(assignPos);
+    });
+
+    test("passes normalized prototype hook context with legacy fields preserved", async () => {
+        const source = `
+function CEditorPage() {}
+CEditorPage.prototype.second = function() { return 2; };
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onAfterLastPrototypeAssign: (ctx) =>
+                    `globalThis.__prototypeCtx='${ctx.hook}:${ctx.target.kind}:${ctx.target.name}:${ctx.target.methodName}:${ctx.className}:${ctx.methodName}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/after-prototype-context.js");
+
+        expect(result.includes("__prototypeCtx = 'onAfterLastPrototypeAssign:prototype:CEditorPage:second:CEditorPage:second'")).toBe(true);
     });
 
     test("injects code after object-style prototype declaration", async () => {
@@ -98,6 +159,30 @@ const after = 1;
         expect(afterPos).toBeGreaterThan(hookPos);
     });
 
+    test("applies real prototype-wrap for object-style prototype declaration", async () => {
+        const source = `
+function CGraphics() {}
+CGraphics.prototype = {
+  init: function() { return 1; },
+  EndDraw: function() { return 2; }
+};
+        `.trim();
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CGraphics"]),
+            generateCode: {
+                onConstructor: ({ className }) =>
+                    `globalThis.__prototypeWrapObject='${className}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/prototype-wrap-object.js");
+        const assignPos = result.indexOf("CGraphics.prototype =");
+        const observePos = result.indexOf('Tracer.observePrototype(CGraphics, "CGraphics")');
+
+        expect(observePos).toBeGreaterThan(assignPos);
+    });
+
     test("injects code after window-bracket prototype method assignment", async () => {
         const source = `
 window["asc_docs_api"].prototype["asc_nativeCalculate"] = function() { return 1; };
@@ -122,12 +207,8 @@ const after = 1;
         expect(afterPos).toBeGreaterThan(hookPos);
     });
 
-    test("passes hasInstanceMethodsOnThis flag into construct hook", async () => {
-        const source = `
-function CEditorPage() {
-  this.init = function() { return 1; };
-}
-        `.trim();
+    test("passes hasInstanceMethodsOnThis flag for HtmlPage-style instance-method fixture", async () => {
+        const source = readFixture("htmlpage-instance-method.js");
 
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
@@ -140,6 +221,42 @@ function CEditorPage() {
         const result = await loader.processCode(source, "C:/tmp/construct-flag.js");
         expect(result.includes("__constructFlag")).toBe(true);
         expect(result.includes("__constructFlag = 'CEditorPage:true'")).toBe(true);
+    });
+
+    test("applies real instance-wrap for function-style instance method assignments", async () => {
+        const source = readFixture("htmlpage-instance-method.js");
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) =>
+                    `globalThis.__instanceWrapFn='${className}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/instance-wrap-function.js");
+        const assignPos = result.indexOf("this.init = function()");
+        const observePos = result.indexOf('Tracer.observeProperty(this, "init", "CEditorPage")');
+
+        expect(observePos).toBeGreaterThan(assignPos);
+    });
+
+    test("applies real instance-wrap for class-style instance method assignments", async () => {
+        const source = readFixture("class-instance-method.js");
+
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) =>
+                    `globalThis.__instanceWrapClass='${className}';`
+            }
+        });
+
+        const result = await loader.processCode(source, "C:/tmp/instance-wrap-class.js");
+        const assignPos = result.indexOf("this.init = function()");
+        const observePos = result.indexOf('Tracer.observeProperty(this, "init", "CEditorPage")');
+
+        expect(observePos).toBeGreaterThan(assignPos);
     });
 
     test("hasInstanceMethodsOnThis does not scan nested blocks", async () => {
@@ -222,15 +339,8 @@ function CEditorPage() {}
         expect(result.includes("observePrototype('undefined')")).toBe(false);
     });
 
-    test("supports targets as function without debug gate", async () => {
-        const source = `
-class CEditorPage {
-  constructor() {}
-}
-class BasePage {
-  constructor() {}
-}
-        `.trim();
+    test("supports targets as function on permanent fixture", async () => {
+        const source = readFixture("function-targets.js");
 
         const loader = new SWCInjectLoader({
             targets: (targetName) => /^C[A-Z].*/.test(String(targetName)),
@@ -245,22 +355,8 @@ class BasePage {
         expect(result.includes("__fnTargets = 'BasePage'")).toBe(false);
     });
 
-    test("covers Format.js-style prototype flow", async () => {
-        const source = `
-function CBaseObject() {
-  this.Id = null;
-}
-InitClass(CBaseObject, CBaseNoIdObject, 0);
-CBaseObject.prototype.isGlobalSkipAddId = function () {
-  return false;
-};
-function CT_Hyperlink() {
-  CBaseNoIdObject.call(this);
-}
-CT_Hyperlink.prototype.Write_ToBinary = function () {
-  return 1;
-};
-        `.trim();
+    test("covers Format.js-style prototype flow on permanent fixture", async () => {
+        const source = readFixture("format-prototype-flow.js");
 
         const loader = new SWCInjectLoader({
             targets: (targetName) => /^C[A-Z].*/.test(String(targetName)),
