@@ -28,8 +28,7 @@ export default defineConfig({
         items: [
           { text: 'Tracer Dev Guide', link: '/tracer-dev-guide' },
           { text: 'Tracer AI Guide', link: '/tracer-ai-guide' },
-          { text: 'All Docs (Unified)', link: '/all-docs' },
-          { text: 'New Doc', link: '/new%20doc' }
+          { text: 'All Docs (Unified)', link: '/all-docs' }
         ]
       },
       {

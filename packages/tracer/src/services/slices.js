@@ -5,6 +5,8 @@ import {
   unsubscribeEvents,
 } from "./subscriptions.js";
 
+const sliceExecutionDepth = new Map();
+
 const normalizeSliceConfig = (config) => {
   if (typeof config === "function") {
     return {
@@ -102,6 +104,36 @@ export const registerSliceDefinition = ({
 
   logger.log(`Зарегистрирован TraceStreamSlice - ${sliceName}`);
   logger.log(`${sliceName} - ${normalizedConfig.description || "Описание не определено"}`);
+};
+
+export const executeInSlice = ({ tracerState, sliceName, invoke }) => {
+  const nextDepth = (sliceExecutionDepth.get(sliceName) || 0) + 1;
+  sliceExecutionDepth.set(sliceName, nextDepth);
+  tracerState.set(sliceName, true);
+
+  const finalizeSlice = () => tracerState.set(sliceName, false);
+  const releaseSlice = () => {
+    const depth = (sliceExecutionDepth.get(sliceName) || 1) - 1;
+    if (depth <= 0) {
+      sliceExecutionDepth.delete(sliceName);
+      finalizeSlice();
+      return;
+    }
+    sliceExecutionDepth.set(sliceName, depth);
+    tracerState.set(sliceName, true);
+  };
+
+  try {
+    const result = invoke();
+    if (result && typeof result.finally === "function") {
+      return result.finally(releaseSlice);
+    }
+    releaseSlice();
+    return result;
+  } catch (error) {
+    releaseSlice();
+    throw error;
+  }
 };
 
 export const disableSliceListeners = ({ emitter, stateConfig, sliceName }) => {

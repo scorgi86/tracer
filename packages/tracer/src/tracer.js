@@ -1,12 +1,13 @@
-﻿import { emitter } from "./observers/constants.js";
+import { emitter } from "./observers/constants.js";
 import { ExecutionContext } from "./observers/context.js";
+import { includesByPatterns } from "./patterns.js";
+import { isPlainObject } from "./object.js";
+import { buildTraceOptions, traceOptionsSymbol } from "./services/config.js";
 import {
   createProxyFn,
   getTraceOptions,
   setTraceOptions,
-  buildTraceOptions,
   tracerState,
-  traceOptionsSymbol,
   traverse,
   wrapConstructor,
   wrapProperty,
@@ -26,7 +27,6 @@ const tracePropertyCallback = subscriptionService.createStore();
 const traceBatchCallback = subscriptionService.createStore();
 const traceCallBatchCallback = subscriptionService.createStore();
 const tracePropertyBatchCallback = subscriptionService.createStore();
-const sliceExecutionDepth = new Map();
 const shallowObservedProps = Symbol("shallowObservedProps");
 const TRACE_PROFILES = Object.freeze({
   minimal: Object.freeze({
@@ -51,26 +51,6 @@ const TRACE_PROFILES = Object.freeze({
     captureContext: true,
   }),
 });
-
-const includesByPatterns = (value, patterns = []) => {
-  if (!value || !patterns?.length) {
-    return false;
-  }
-  for (let i = 0; i < patterns.length; i += 1) {
-    if (value.indexOf(patterns[i]) > -1) {
-      return true;
-    }
-  }
-  return false;
-};
-
-const isPlainObject = (value) => {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
 
 const hasOwnFunctionProps = (target) => {
   if (!target || (typeof target !== "object" && typeof target !== "function")) {
@@ -195,36 +175,6 @@ const observePropertyObjectShallow = (target, parentPropName, className) => {
   return target;
 };
 
-const executeInSlice = (sliceName, invoke) => {
-  const nextDepth = (sliceExecutionDepth.get(sliceName) || 0) + 1;
-  sliceExecutionDepth.set(sliceName, nextDepth);
-  tracerState.set(sliceName, true);
-
-  const finalizeSlice = () => tracerState.set(sliceName, false);
-  const releaseSlice = () => {
-    const depth = (sliceExecutionDepth.get(sliceName) || 1) - 1;
-    if (depth <= 0) {
-      sliceExecutionDepth.delete(sliceName);
-      finalizeSlice();
-      return;
-    }
-    sliceExecutionDepth.set(sliceName, depth);
-    tracerState.set(sliceName, true);
-  };
-
-  try {
-    const result = invoke();
-    if (result && typeof result.finally === "function") {
-      return result.finally(releaseSlice);
-    }
-    releaseSlice();
-    return result;
-  } catch (error) {
-    releaseSlice();
-    throw error;
-  }
-};
-
 const applySubscriberErrorPolicy = (traceOptions) => {
   emitter.setSubscriberErrorPolicy({
     throwSubscriberErrors: traceOptions.throwSubscriberErrors,
@@ -264,18 +214,18 @@ const buildInstrumentationOptions = () => {
 };
 
 /**
- * Главный класс трассировщика для мониторинга вызовов функций,
- * доступа к свойствам и контекста выполнения.
- * Предоставляет статические методы для обертки функций, классов и объектов
- * с возможностью отслеживания.
+ * ������� ����� ������������� ��� ����������� ������� �������,
+ * ������� � ��������� � ��������� ����������.
+ * ������������� ����������� ������ ��� ������� �������, ������� � ��������
+ * � ������������ ������������.
    */
 export class Tracer {
 
-  /** @type {object} Статическая ссылка на состояние трассировщика */
+  /** @type {object} ����������� ������ �� ��������� ������������� */
   static tracerState = tracerState;
 
   /**
-   * Конфигурация провайдера контекста выполнения.
+   * ������������ ���������� ��������� ����������.
    * @param {object} options
    * @param {'stack'|'zone'} [options.asyncContext='stack']
    * @returns {typeof Tracer}
@@ -293,7 +243,7 @@ export class Tracer {
   static setTraceProfile(profileName = "balanced", overrides = {}) {
     const preset = TRACE_PROFILES[profileName];
     if (!preset) {
-      throw new Error(`Неизвестный профиль трассировки: ${profileName}`);
+      throw new Error(`����������� ������� �����������: ${profileName}`);
     }
     const nextOptions = setTraceOptions({
       ...preset,
@@ -324,14 +274,14 @@ export class Tracer {
   }
 
   /**
-   * Создает обертку над функцией и отслеживает ее вызовы
-   * @param {Function} targetFn - Функция для обертки
-   * @param {string} eventName - Имя события, которое генерируется при вызове функции
-   * @returns {Function} Обернутая функция с возможностью трассировки
+   * ������� ������� ��� �������� � ����������� �� ������
+   * @param {Function} targetFn - ������� ��� �������
+   * @param {string} eventName - ��� �������, ������� ������������ ��� ������ �������
+   * @returns {Function} ��������� ������� � ������������ �����������
    */
   static createProxyFn = (targetFn, eventName) => {
     if (!targetFn || typeof targetFn !== 'function') {
-      throw new Error('targetFn должен быть функцией');
+      throw new Error('targetFn ������ ���� ��������');
     }
     return createProxyFn({
       fnKey: eventName || targetFn.name,
@@ -339,33 +289,33 @@ export class Tracer {
       className: "commonFn",
     });
   };
-  
-  
+
+
   /**
-   * Возвращает функцию-обертку, которая отслеживает создание новых экземпляров класса.
-   * Вызовы методов экземпляра передаются в общий поток вызовов.
-   * @param {Function} originalConstructor - Конструктор класса для обертки
-   * @param {string} className - Имя наблюдаемого класса
-   * @returns {Function} Обернутый конструктор, создающий трассируемые экземпляры
+   * ���������� �������-�������, ������� ����������� �������� ����� ����������� ������.
+   * ������ ������� ���������� ���������� � ����� ����� �������.
+   * @param {Function} originalConstructor - ����������� ������ ��� �������
+   * @param {string} className - ��� ������������ ������
+   * @returns {Function} ��������� �����������, ��������� ������������ ����������
    */
   static observeConstructor(originalConstructor, className) {
     if (!originalConstructor || typeof originalConstructor !== 'function') {
-      throw new Error('originalConstructor должен быть функцией-конструктором');
+      throw new Error('originalConstructor ������ ���� ��������-�������������');
     }
     const finalClassName = className || originalConstructor.name;
     if (!finalClassName) {
-      throw new Error('Не удалось определить имя класса');
+      throw new Error('�� ������� ���������� ��� ������');
     }
     return wrapConstructor(originalConstructor, finalClassName);
   }
 
   /**
-   * Оборачивает get/set методы свойства объекта в наблюдатель.
-   * Обращение к свойству запускает события propertySet/propertyGet
-   * @param {object} target - Целевой объект, содержащий свойство
-   * @param {string} propName - Имя свойства для наблюдения
-   * @param {string} [className] - Имя класса для идентификации (по умолчанию target.constructor.name)
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ����������� get/set ������ �������� ������� � �����������.
+   * ��������� � �������� ��������� ������� propertySet/propertyGet
+   * @param {object} target - ������� ������, ���������� ��������
+   * @param {string} propName - ��� �������� ��� ����������
+   * @param {string} [className] - ��� ������ ��� ������������� (�� ��������� target.constructor.name)
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observeProperty(target, propName, className) {
     wrapProxyPropDescriptor(
@@ -378,14 +328,14 @@ export class Tracer {
   }
 
   /**
-   * Оборачивает target в Proxy и отслеживает обращения к его свойству target[propName].
-   * В гибридном режиме по умолчанию использует безопасный shallow-режим без Proxy.
-   * Proxy включается явно и только для plain-object.
-   * @param {object} target - Целевой объект, для которого нужно проксировать обращения к свойству
-   * @param {string} propName - Имя свойства
-   * @param {string|object|number} [classNameOrOptions] - Имя класса или настройки глубины
-   * @param {object|number} [options] - Настройки ({ useProxy, shouldUseProxy, maxDepth, shouldWrap }) или число глубины
-   * @returns {Proxy} Прокси-объект, отслеживающий доступ к свойству
+   * ����������� target � Proxy � ����������� ��������� � ��� �������� target[propName].
+   * � ��������� ������ �� ��������� ���������� ���������� shallow-����� ��� Proxy.
+   * Proxy ���������� ���� � ������ ��� plain-object.
+   * @param {object} target - ������� ������, ��� �������� ����� ������������ ��������� � ��������
+   * @param {string} propName - ��� ��������
+   * @param {string|object|number} [classNameOrOptions] - ��� ������ ��� ��������� �������
+   * @param {object|number} [options] - ��������� ({ useProxy, shouldUseProxy, maxDepth, shouldWrap }) ��� ����� �������
+   * @returns {Proxy} ������-������, ������������� ������ � ��������
    */
   static observePropertyObject(target, propName, classNameOrOptions, options) {
     let className = classNameOrOptions;
@@ -416,11 +366,11 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за всеми свойствами объекта, исключая функции.
-   * Каждое свойство будет генерировать события propertyGet/propertySet при доступе.
-   * @param {object} target - Целевой объект для наблюдения за всеми свойствами
-   * @param {string} className - Имя класса для идентификации
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� �� ����� ���������� �������, �������� �������.
+   * ������ �������� ����� ������������ ������� propertyGet/propertySet ��� �������.
+   * @param {object} target - ������� ������ ��� ���������� �� ����� ����������
+   * @param {string} className - ��� ������ ��� �������������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observeAllProperties(target, className) {
     Object.keys(target)
@@ -433,10 +383,10 @@ export class Tracer {
   }
 
   /**
-   * Рекурсивно обходит и наблюдает за всеми свойствами и методами целевого объекта
-   * @param {object} target - Целевой объект для трассировки
-   * @param {string} targetName - Имя целевого объекта
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ���������� ������� � ��������� �� ����� ���������� � �������� �������� �������
+   * @param {object} target - ������� ������ ��� �����������
+   * @param {string} targetName - ��� �������� �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observe(target, targetName) {
     const finalTargetName = targetName || target?.name || target?.constructor?.name || "Object";
@@ -447,15 +397,15 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за прототипом класса, отслеживая все методы и свойства
-   * @param {Function} target - Класс или конструктор
-   * @param {string} className - Имя класса
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если у класса отсутствует прототип
+   * ��������� �� ���������� ������, ���������� ��� ������ � ��������
+   * @param {Function} target - ����� ��� �����������
+   * @param {string} className - ��� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� � ������ ����������� ��������
    */
   static observePrototype(target, className) {
     if (!target.prototype) {
-      throw new Error(`Не найден прототип класса ${className}`);
+      throw new Error(`�� ������ �������� ������ ${className}`);
     }
     const finalClassName = className || target?.name || "AnonymousClass";
     const report = traverse(target.prototype, `${finalClassName}`, buildInstrumentationOptions());
@@ -465,9 +415,9 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за списком объектов
-   * @param {Array} targetList - Массив объектов для наблюдения
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� �� ������� ��������
+   * @param {Array} targetList - ������ �������� ��� ����������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observeAll(targetList) {
     const targetValues = Array.isArray(targetList)
@@ -492,9 +442,9 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за прототипами всех классов в списке
-   * @param {Array} targetList - Массив классов для наблюдения
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� �� ����������� ���� ������� � ������
+   * @param {Array} targetList - ������ ������� ��� ����������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observePrototypeAll(targetList) {
     const targetValues = Array.isArray(targetList)
@@ -519,9 +469,9 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за всеми экспортированными классами из модуля
-   * @param {object} exportTarget - Объект экспорта модуля
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� �� ����� ����������������� �������� �� ������
+   * @param {object} exportTarget - ������ �������� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static observeFromExports(exportTarget) {
     const classList = Object.keys(exportTarget).filter((key) =>
@@ -547,9 +497,9 @@ export class Tracer {
   }
 
   /**
-   * Наблюдает за прототипами всех экспортированных классов из модуля
-   * @param {object} exportTarget - Объект экспорта модуля
-   * @returns {Map} Карта наблюдаемых классов
+   * ��������� �� ����������� ���� ���������������� ������� �� ������
+   * @param {object} exportTarget - ������ �������� ������
+   * @returns {Map} ����� ����������� �������
    */
   static observePrototypesFromExports(exportTarget) {
     let map = new Map();
@@ -579,8 +529,8 @@ export class Tracer {
   }
 
   /**
-   * Возвращает отчет последней попытки инструментации.
-   * Удобно для диагностики случаев, когда часть методов/свойств не была обернута.
+   * ���������� ����� ��������� ������� ��������������.
+   * ������ ��� ����������� �������, ����� ����� �������/������� �� ���� ��������.
    * @returns {object|null}
    */
   static getLastInstrumentationReport() {
@@ -598,18 +548,18 @@ export class Tracer {
   }
 
   /**
-   * Создает контекст выполнения, который начинается по условию config.predicate
-   * config.beforeCall() === true => начать контекст
-   * config.afterCall() === false => завершить контекст
-   * @param {string} streamSliceName - Имя слайса в потоке вызовов функций
-   * @param {object|Function} config - Настройки слайса или функция-предикат
-   * @param {Function} [config.predicate] - Функция-предикат для определения начала/конца слайса
-   * @param {Function} [config.beforeCall] - Вызывается перед вызовом функции
-   * @param {Function} [config.afterCall] - Вызывается после вызова функции
-   * @param {*} [config.initial] - Начальное значение состояния слайса
-   * @param {string} [config.description] - Описание слайса
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если слайс с таким именем уже определен
+   * ������� �������� ����������, ������� ���������� �� ������� config.predicate
+   * config.beforeCall() === true => ������ ��������
+   * config.afterCall() === false => ��������� ��������
+   * @param {string} streamSliceName - ��� ������ � ������ ������� �������
+   * @param {object|Function} config - ��������� ������ ��� �������-��������
+   * @param {Function} [config.predicate] - �������-�������� ��� ����������� ������/����� ������
+   * @param {Function} [config.beforeCall] - ���������� ����� ������� �������
+   * @param {Function} [config.afterCall] - ���������� ����� ������ �������
+   * @param {*} [config.initial] - ��������� �������� ��������� ������
+   * @param {string} [config.description] - �������� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� ����� � ����� ������ ��� ���������
    */
   static defineSlice(streamSliceName, config) {
     sliceService.defineSlice({
@@ -624,9 +574,9 @@ export class Tracer {
   }
 
   /**
-   * Выполняет отписку всех обработчиков слайса
-   * @param {string} streamSliceName - Имя слайса
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� ������� ���� ������������ ������
+   * @param {string} streamSliceName - ��� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static disableSliceListeners(streamSliceName) {
     sliceService.disableSliceListeners({
@@ -638,9 +588,9 @@ export class Tracer {
   }
 
   /**
-   * Метод начинает наблюдение за потоком вызовов для указанного слайса
-   * @param {string} streamSliceName - Имя слайса
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ����� �������� ���������� �� ������� ������� ��� ���������� ������
+   * @param {string} streamSliceName - ��� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static enableSlice(streamSliceName) {
     sliceService.enableSlice({
@@ -652,12 +602,12 @@ export class Tracer {
   }
 
   /**
-   * Метод подписывается на события beforeCallMethod/afterCallMethod,
-   * если в момент срабатывания события tracerState[streamSliceName] === true => выполнит callback(eventArgs)
-   * @param {string} sliceName - Имя слайса
-   * @param {Function} callback - Функция обратного вызова, вызываемая при активном слайсе
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если не указаны имя слайса или колбек, или слайс не определен
+   * ����� ������������� �� ������� beforeCallMethod/afterCallMethod,
+   * ���� � ������ ������������ ������� tracerState[streamSliceName] === true => �������� callback(eventArgs)
+   * @param {string} sliceName - ��� ������
+   * @param {Function} callback - ������� ��������� ������, ���������� ��� �������� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� �� ������� ��� ������ ��� ������, ��� ����� �� ���������
    */
   static traceBySlice(sliceName, callback) {
     sliceService.traceBySlice({
@@ -670,10 +620,10 @@ export class Tracer {
   }
 
   /**
-   * Выполняет трассировку слайса один раз, после чего автоматически отписывается
-   * @param {string} sliceName - Имя слайса
-   * @param {Function} callback - Функция обратного вызова
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� ����������� ������ ���� ���, ����� ���� ������������� ������������
+   * @param {string} sliceName - ��� ������
+   * @param {Function} callback - ������� ��������� ������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static traceBySliceOnce(sliceName, callback) {
     sliceService.traceBySliceOnce({
@@ -687,10 +637,10 @@ export class Tracer {
   }
 
   /**
-   * Выполняет трассировку последовательности слайсов
-   * @param {string[]} sliceSeq - Массив имен слайсов
-   * @param {Function} callback - Функция обратного вызова, вызываемая когда все слайсы активны
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� ����������� ������������������ �������
+   * @param {string[]} sliceSeq - ������ ���� �������
+   * @param {Function} callback - ������� ��������� ������, ���������� ����� ��� ������ �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static traceBySliceSequence(sliceSeq, callback) {
     Tracer.traceAll((args) => {
@@ -706,11 +656,12 @@ export class Tracer {
     return Tracer;
   }
 
+
   /**
-   * Метод выполняет отписку всех обработчиков слайса sliceName
-   * @param {string} sliceName - Имя слайса
-   * @param {Function} [callback] - Функция обработчик, будет отписана если указана
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ����� ��������� ������� ���� ������������ ������ sliceName
+   * @param {string} sliceName - ��� ������
+   * @param {Function} [callback] - ������� ����������, ����� �������� ���� �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static untraceBySlice(sliceName, callback) {
     sliceService.untraceBySlice({
@@ -723,18 +674,18 @@ export class Tracer {
   }
 
   /**
-   * Метод принимает одно из событий и колбек.
-   * Колбек вызывается при срабатывании события, если условие возвращает true,
-   * срабатывает точка останова debugger
-   * @param {string} eventName - Имя события (beforeCallMethod/afterCallMethod/propertyGet/propertySet)
-   * @param {Function} conditionCallback - Функция, возвращающая boolean для активации отладки
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если не указаны имя события или колбек
+   * ����� ��������� ���� �� ������� � ������.
+   * ������ ���������� ��� ������������ �������, ���� ������� ���������� true,
+   * ����������� ����� �������� debugger
+   * @param {string} eventName - ��� ������� (beforeCallMethod/afterCallMethod/propertyGet/propertySet)
+   * @param {Function} conditionCallback - �������, ������������ boolean ��� ��������� �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� �� ������� ��� ������� ��� ������
    */
   static debugOn(eventName, conditionCallback) {
 
     if (!eventName || !conditionCallback) {
-      throw new Error("Укажите имя события и колбек!");
+      throw new Error("������� ��� ������� � ������!");
     }
 
     const cb = (args) => {
@@ -750,16 +701,16 @@ export class Tracer {
   }
 
   /**
-   * Останавливает исполнение кода один раз, если conditionCallback() === true
-   * @param {string} eventName - Имя события
-   * @param {Function} conditionCallback - Функция, возвращающая boolean для активации отладки
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если не указаны имя события или колбек
+   * ������������� ���������� ���� ���� ���, ���� conditionCallback() === true
+   * @param {string} eventName - ��� �������
+   * @param {Function} conditionCallback - �������, ������������ boolean ��� ��������� �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� �� ������� ��� ������� ��� ������
    */
   static debugOnceOn(eventName, conditionCallback) {
 
     if (!eventName || !conditionCallback) {
-      throw new Error("Укажите имя события и колбек!");
+      throw new Error("������� ��� ������� � ������!");
     }
 
     const cb = (args) => {
@@ -775,10 +726,10 @@ export class Tracer {
   }
 
   /**
-   * Выполняет подписку на поток вызовов функций и чтения/записи свойств
-   * @param {Function} callback - Функция обратного вызова, получающая события
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
-   * @throws {Error} Если не указан колбек
+   * ��������� �������� �� ����� ������� ������� � ������/������ �������
+   * @param {Function} callback - ������� ��������� ������, ���������� �������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * @throws {Error} ���� �� ������ ������
    */
   static traceAll(callback) {
     subscriptionService.traceAll({
@@ -789,9 +740,10 @@ export class Tracer {
     return Tracer;
   }
 
+
   /**
-   * Батч-подписка на все события трассировки.
-   * @param {Function} callback - Получает массив событий
+   * ����-�������� �� ��� ������� �����������.
+   * @param {Function} callback - �������� ������ �������
    * @param {object} [options]
    * @param {number} [options.maxBatchSize=100]
    * @param {number} [options.flushIntervalMs=16]
@@ -809,7 +761,7 @@ export class Tracer {
   }
 
   /**
-   * Подписка только на события вызовов функций.
+   * �������� ������ �� ������� ������� �������.
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
@@ -823,8 +775,8 @@ export class Tracer {
   }
 
   /**
-   * Батч-подписка на события вызовов функций.
-   * @param {Function} callback - Получает массив событий
+   * ����-�������� �� ������� ������� �������.
+   * @param {Function} callback - �������� ������ �������
    * @param {object} [options]
    * @returns {typeof Tracer}
    */
@@ -839,7 +791,7 @@ export class Tracer {
   }
 
   /**
-   * Подписка только на события чтения/записи свойств.
+   * �������� ������ �� ������� ������/������ �������.
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
@@ -852,9 +804,10 @@ export class Tracer {
     return Tracer;
   }
 
+
   /**
-   * Подписка на события чтения/записи конкретных свойств без ручного if в callback.
-   * @param {string | string[] | Function} propSelector - Имя свойства, массив имен или предикат(event) => boolean
+   * �������� �� ������� ������/������ ���������� ������� ��� ������� if � callback.
+   * @param {string | string[] | Function} propSelector - ��� ��������, ������ ���� ��� ��������(event) => boolean
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
@@ -880,8 +833,8 @@ export class Tracer {
   }
 
   /**
-   * Батч-подписка на события чтения/записи свойств.
-   * @param {Function} callback - Получает массив событий
+   * ����-�������� �� ������� ������/������ �������.
+   * @param {Function} callback - �������� ������ �������
    * @param {object} [options]
    * @returns {typeof Tracer}
    */
@@ -896,8 +849,8 @@ export class Tracer {
   }
 
   /**
-   * Очищает все подписки трассировки
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ������� ��� �������� �����������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static untraceAll() {
     subscriptionService.untraceAll({
@@ -912,7 +865,7 @@ export class Tracer {
   }
 
   /**
-   * Очистка подписок на события вызовов функций.
+   * ������� �������� �� ������� ������� �������.
    * @returns {typeof Tracer}
    */
   static untraceCalls() {
@@ -928,7 +881,7 @@ export class Tracer {
   }
 
   /**
-   * Очистка подписок на события чтения/записи свойств.
+   * ������� �������� �� ������� ������/������ �������.
    * @returns {typeof Tracer}
    */
   static untraceProperties() {
@@ -944,13 +897,13 @@ export class Tracer {
   }
 
   /**
-   * Функция выполняет логирование при совпадении условия по состоянию слайсов:
-   * - string: активен указанный слайс;
-   * - string[]: активны все указанные слайсы;
-   * - predicate(args): пользовательский предикат вернул true.
-   * @param {string | string[] | Function} sliceSelector - Селектор слайса или предикат
-   * @param {...*} values - Значения для логирования
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ������� ��������� ����������� ��� ���������� ������� �� ��������� �������:
+   * - string: ������� ��������� �����;
+   * - string[]: ������� ��� ��������� ������;
+   * - predicate(args): ���������������� �������� ������ true.
+   * @param {string | string[] | Function} sliceSelector - �������� ������ ��� ��������
+   * @param {...*} values - �������� ��� �����������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static logSlice(sliceSelector, ...values) {
     const args = {
@@ -988,10 +941,10 @@ export class Tracer {
   }
 
   /**
-   * Выполняет функцию если слайс активен
-   * @param {string} sliceName - Имя слайса
-   * @param {Function} fn - Функция для выполнения
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ��������� ������� ���� ����� �������
+   * @param {string} sliceName - ��� ������
+   * @param {Function} fn - ������� ��� ����������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static invokeOnSlice(sliceName, fn) {
     if (Tracer.tracerState.get(sliceName)) {
@@ -1002,8 +955,8 @@ export class Tracer {
   }
 
   /**
-   * Возвращает текущий контекст исполнения
-   * @returns {import('./observers/context.js').ExecutionContext} Текущий контекст выполнения
+   * ���������� ������� �������� ����������
+   * @returns {import('./observers/context.js').ExecutionContext} ������� �������� ����������
    */
   static getCurrentContext() {
     return ExecutionContext.getCurrentContext();
@@ -1017,7 +970,11 @@ export class Tracer {
       
       target[targetFnName] = function() {
         if (predicate(arguments)) {
-          return executeInSlice(sliceName, () => originalFn.apply(this, arguments));
+          return sliceService.executeInSlice({
+            tracerState: Tracer.tracerState,
+            sliceName,
+            invoke: () => originalFn.apply(this, arguments),
+          });
         }
         return originalFn.apply(this, arguments);
       };
@@ -1026,18 +983,22 @@ export class Tracer {
   }
 
   /**
-   * Принимает функцию и возвращает новую функцию, которая создает слайс.
-   * Слайс фиксирует вызовы функции-аргумента
-   * @param {string} sliceName - Имя слайса
-   * @param {Function} fn - Целевая функция для фиксации вызова слайса
-   * @returns {Function} Обернутая функция, активирующая слайс во время выполнения
+   * ��������� ������� � ���������� ����� �������, ������� ������� �����.
+   * ����� ��������� ������ �������-���������
+   * @param {string} sliceName - ��� ������
+   * @param {Function} fn - ������� ������� ��� �������� ������ ������
+   * @returns {Function} ��������� �������, ������������ ����� �� ����� ����������
    */
   static defineSliceByFunction = (sliceName, fn) => {
     
     Tracer.registerSliceDefinition(sliceName, () => {});
 
     const result = function(...args) {
-      return executeInSlice(sliceName, () => fn.apply(this, args));
+      return sliceService.executeInSlice({
+        tracerState: Tracer.tracerState,
+        sliceName,
+        invoke: () => fn.apply(this, args),
+      });
     };
 
     result.original = fn;
@@ -1046,14 +1007,14 @@ export class Tracer {
   }
 
   /**
-   * Определяет слайс, который активируется при вызове указанной функции
-   * @param {string} sliceName - Имя слайса
-   * @param {string} fnName - Полное имя функции для отслеживания
-   * @returns {typeof Tracer} Класс Tracer для цепочки вызовов
+   * ���������� �����, ������� ������������ ��� ������ ��������� �������
+   * @param {string} sliceName - ��� ������
+   * @param {string} fnName - ������ ��� ������� ��� ������������
+   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
    */
   static defineSliceByFunctionName(sliceName, fnName) {
     if (!sliceName || !fnName) {
-      throw new Error('sliceName и fnName обязательны');
+      throw new Error('sliceName � fnName �����������');
     }
     Tracer.defineSlice(sliceName, (args) => {
       return args.fullName === fnName;
@@ -1062,8 +1023,8 @@ export class Tracer {
   }
 
   /**
-   * Получить список всех активных слайсов
-   * @returns {Array} Массив имен слайсов
+   * �������� ������ ���� �������� �������
+   * @returns {Array} ������ ���� �������
    */
   static getEnabledSlices() {
     return sliceService.getEnabledSlices({
@@ -1073,8 +1034,8 @@ export class Tracer {
   }
 
   /**
-   * Временно отключить слайс
-   * @param {string} sliceName - Имя слайса
+   * �������� ��������� �����
+   * @param {string} sliceName - ��� ������
    * @returns {typeof Tracer}
    */
   static disableSlice(sliceName) {
@@ -1088,8 +1049,8 @@ export class Tracer {
   }
 
   /**
-   * Вернет список зарегистрированных слайсов
-   * @returns {Array} Массив имен слайсов
+   * ������ ������ ������������������ �������
+   * @returns {Array} ������ ���� �������
    */
   static getRegisteredSlices() {
     return sliceService.getRegisteredSlices({
@@ -1098,10 +1059,10 @@ export class Tracer {
   }
 
   /**
-   * Экспортирует зарегистрированные сценарии (слайсы) в переносимый объект.
+   * ������������ ������������������ �������� (������) � ����������� ������.
    * @param {object} [options]
-   * @param {boolean} [options.includeFunctions=true] - Сохранять predicate/beforeCall/afterCall как строки функций
-   * @returns {object} Переносимая модель сценариев
+   * @param {boolean} [options.includeFunctions=true] - ��������� predicate/beforeCall/afterCall ��� ������ �������
+   * @returns {object} ����������� ������ ���������
    */
   static exportSliceScenarios(options = {}) {
     return scenarioService.exportSliceScenarios({
@@ -1112,12 +1073,12 @@ export class Tracer {
   }
 
   /**
-   * Импортирует переносимую модель сценариев.
-   * @param {object} payload - Объект, полученный из exportSliceScenarios
+   * ����������� ����������� ������ ���������.
+   * @param {object} payload - ������, ���������� �� exportSliceScenarios
    * @param {object} [options]
-   * @param {boolean} [options.overwrite=true] - Перезаписать существующие слайсы с тем же именем
-   * @param {boolean} [options.activate=true] - Подписать импортированные слайсы на события
-   * @param {(source: string) => Function} [options.functionParser] - Кастомный парсер функций из строки
+   * @param {boolean} [options.overwrite=true] - ������������ ������������ ������ � ��� �� ������
+   * @param {boolean} [options.activate=true] - ��������� ��������������� ������ �� �������
+   * @param {(source: string) => Function} [options.functionParser] - ��������� ������ ������� �� ������
    * @returns {typeof Tracer}
    */
   static importSliceScenarios(payload, options = {}) {
@@ -1138,11 +1099,11 @@ export class Tracer {
     return typeof EventTarget === 'undefined';
   }
 
-  /** Объект с отчетами трассировки */
+  /** ������ � �������� ����������� */
   static reports = reports;
 
   /**
-   * Хранит карту конфигураций слайсов
+   * ������ ����� ������������ �������
    * @type {Map}
    */
   static [stateConfigKey] = new Map();
@@ -1151,12 +1112,6 @@ export class Tracer {
 const initialTraceOptions = buildTraceOptions(TRACE_PROFILES.balanced);
 tracerState.set(traceOptionsSymbol, initialTraceOptions);
 applySubscriberErrorPolicy(initialTraceOptions);
-
-// Добавить проверку окружения
-if (typeof window !== 'undefined') {
-  window.Tracer = Tracer;
-}
-
 
 
 

@@ -57,7 +57,7 @@ Tracer.defineSlice('cacheOperations', {
 });
 
 // Подписываемся на события
-Tracer.traceSlice('apiRequests', (event) => {
+Tracer.traceBySlice('apiRequests', (event) => {
   if (event.place === 'before') {
     console.log(`📡 Запрос: ${event.args[0]}`);
   } else {
@@ -65,7 +65,7 @@ Tracer.traceSlice('apiRequests', (event) => {
   }
 });
 
-Tracer.traceSlice('cacheOperations', (event) => {
+Tracer.traceBySlice('cacheOperations', (event) => {
   if (event.fnKey === 'get') {
     console.log(`💾 Чтение из кэша: ${event.args[0]}`);
   } else if (event.fnKey === 'set') {
@@ -108,7 +108,7 @@ Tracer.defineSlice('performance', (args) =>
 // Измеряем время выполнения
 const timings = new Map();
 
-Tracer.traceSlice('performance', (event) => {
+Tracer.traceBySlice('performance', (event) => {
   if (event.place === 'before') {
     timings.set(event.fullName, Date.now());
   } else {
@@ -174,7 +174,7 @@ Tracer.defineSlice('errors', {
 });
 
 // Отслеживаем только ошибочные операции
-Tracer.traceSlice('errors', (event) => {
+Tracer.traceBySlice('errors', (event) => {
   if (event.place === 'after' && event.value instanceof Error) {
     console.error(`❌ Ошибка в ${event.fullName}:`, event.value.message);
     console.error('Стек вызовов:', event.callStack);
@@ -219,7 +219,7 @@ Tracer.defineSlice('businessLogic', {
 });
 
 // Анализируем последовательность операций
-Tracer.traceSliceSeq(['authentication', 'database'], (event) => {
+Tracer.traceBySliceSequence(['authentication', 'database'], (event) => {
   console.log('🔐 Аутентифицированный запрос к БД:', event.fullName);
 });
 
@@ -230,7 +230,7 @@ const stats = {
   business: 0
 };
 
-Tracer.trace((event) => {
+Tracer.traceCalls((event) => {
   if (event.eventType === 'functionCall' && event.place === 'before') {
     if (event.className === 'Database') stats.database++;
     if (event.className === 'AuthService') stats.auth++;
@@ -263,7 +263,7 @@ Tracer.defineSlice('debugMode', {
 });
 
 // Подключаем детальное логирование для отладочных пользователей
-Tracer.traceSlice('debugMode', (event) => {
+Tracer.traceBySlice('debugMode', (event) => {
   console.group(`🐛 [DEBUG] ${event.fullName}`);
   console.log('Аргументы:', event.args);
   console.log('Контекст:', event.callStack);

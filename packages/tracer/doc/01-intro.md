@@ -21,8 +21,7 @@ const mergedDocumentation = `# Tracer - Единая документация
 12. [Решение проблем](#12-решение-проблем)
 13. [Чеклист разработчика](#13-чеклист-разработчика)
 14. [Типичные ошибки](#14-типичные-ошибки)
-15. [Миграция с версии 3.x на 4.x](#15-миграция-с-версии-3x-на-4x)
-16. [История изменений](#16-история-изменений)
+15. [История изменений](#15-история-изменений)
 
 ---
 
@@ -497,58 +496,62 @@ Tracer.configureTracing({
 
 ### 8.1 Основные методы Tracer
 
-\`\`\`javascript
-// Обертки
+```javascript
+// Наблюдение функций и классов
 Tracer.createProxyFn(targetFn, eventName);
-Tracer.observeConstructor(Constructor, className);
-Tracer.observeProperty(target, propName, className);
-Tracer.observe(target, targetName);
-Tracer.observePrototype(target, className);
-Tracer.observeAllProperties(target, className);
+Tracer.observeConstructor(classCtor, className?);
+Tracer.observe(target, targetName?);
+Tracer.observePrototype(classCtor, className?);
 Tracer.observeAll(targetList);
 Tracer.observePrototypeAll(targetList);
 
-// Слайсы
-Tracer.defineSlice(name, config);
-Tracer.traceBySlice(name, callback);
-Tracer.traceBySliceOnce(name, callback);
-Tracer.untraceBySlice(name, callback);
-Tracer.enableSlice(name);
-Tracer.disableSlice(name);
-Tracer.disableSliceListeners(name);
-Tracer.traceBySliceSequence(sliceSeq, callback);
-Tracer.getEnabledSlices();
-Tracer.getRegisteredSlices();
+// Наблюдение свойств
+Tracer.observeProperty(target, propName, className?);
+Tracer.observeAllProperties(target, className?);
+Tracer.observePropertyObject(target, propName, classNameOrOptions?, options?);
 
-// Подписки
+// Подписки на трассировку
 Tracer.traceAll(callback);
 Tracer.traceCalls(callback);
 Tracer.traceProperties(callback);
+Tracer.traceProperty(propSelector, callback);
 Tracer.traceAllBatched(callback, options);
+Tracer.traceCallsBatched(callback, options);
+Tracer.tracePropertiesBatched(callback, options);
 Tracer.untraceAll();
 Tracer.untraceCalls();
 Tracer.untraceProperties();
 
-// Конфигурация
+// Слайсы
+Tracer.defineSlice(name, config);
+Tracer.enableSlice(name);
+Tracer.disableSlice(name);
+Tracer.disableSliceListeners(name);
+Tracer.traceBySlice(name, callback);
+Tracer.traceBySliceOnce(name, callback);
+Tracer.traceBySliceSequence(sliceSeq, callback);
+Tracer.untraceBySlice(name, callback?);
+Tracer.getEnabledSlices();
+Tracer.getRegisteredSlices();
+Tracer.defineSliceByCall(sliceName, target, targetFnName, predicate);
+Tracer.defineSliceByFunction(sliceName, fn);
+Tracer.defineSliceByFunctionName(sliceName, fnName);
+Tracer.exportSliceScenarios(payload, options?);
+Tracer.importSliceScenarios(payload, options?);
+
+// Конфигурация и отладка
 Tracer.configure(options);
 Tracer.setTraceProfile(profileName, overrides);
 Tracer.configureTracing(options);
 Tracer.getTraceConfig();
-
-// Отладка
-Tracer.debugOn(eventName, conditionCallback);
-Tracer.debugOnceOn(eventName, conditionCallback);
-Tracer.logSlice(sliceName, ...values);
+Tracer.logSlice(sliceSelector, ...values);
 Tracer.invokeOnSlice(sliceName, fn);
 Tracer.getCurrentContext();
-
-// Экспорт/импорт
-Tracer.exportSliceScenarios(options);
-Tracer.importSliceScenarios(payload, options);
-Tracer.defineSliceByFunction(sliceName, fn);
-Tracer.defineSliceByFunctionName(sliceName, fnName);
-Tracer.defineSliceByCall(sliceName, target, targetFnName, predicate);
-\`\`\`
+Tracer.debugOn(eventName, conditionCallback);
+Tracer.debugOnceOn(eventName, conditionCallback);
+Tracer.tracerState;
+Tracer.reports;
+```
 
 ### 8.2 Конфигурация трассировки
 
@@ -854,38 +857,6 @@ Tracer.defineSlice('slow', {
 Tracer.traceAll(callback);
 // ... нет вызова Tracer.untraceAll() → утечка памяти
 
-// 3. Оборачиваете один объект дважды
-Tracer.observe(obj);
-Tracer.observe(obj); // Второй раз не нужен
-
-// 4. Используете tracerState в фильтрах
-Tracer.configureTracing({
-  callFilter: ({ tracerState }) => {
-    return tracerState.get('someSlice') === true; // Не работает!
-  }
-});
-
-// 5. Сравниваете прогоны с разными входными данными
-// ReportSliceDiff покажет ложные отличия
-\`\`\`
-
-### ✅ Правильно
-
-\`\`\`javascript
-// 1. Легкий predicate
-Tracer.defineSlice('fast', {
-  predicate: (event) => event.fullName.includes('Important')
-});
-
-// 2. Всегда очищайте
-const subscription = Tracer.traceAll(callback);
-// ... после работы
-Tracer.untraceAll();
-
-// 3. Проверяйте перед оберткой
-if (!Tracer.isWrapped(obj)) {
-  Tracer.observe(obj);
-}
 
 // 4. Фильтруйте внутри callback
 Tracer.traceBySlice('slice', (event) => {
@@ -904,52 +875,11 @@ baseline.stop();
 
 ---
 
-## 15. Миграция с версии 3.x на 4.x
-
-### Изменения в API
-
-| 3.x | 4.x |
-|-----|-----|
-| \`Tracer.traceEvent(event, callback)\` | \`Tracer.traceAll(callback)\` |
-| \`Tracer.createSlice(name, options)\` | \`Tracer.defineSlice(name, config)\` |
-| \`slice.activate()\` / \`slice.deactivate()\` | \`Tracer.enableSlice(name)\` / \`Tracer.disableSlice(name)\` |
-| \`ReportCallTree\` | \`ReportTreeView\` |
-
-### Шаги миграции
-
-\`\`\`javascript
-// Было (3.x)
-Tracer.traceEvent('call', (event) => {
-  console.log(event.name);
-});
-
-const slice = Tracer.createSlice('payment', {
-  onEnter: () => {},
-  onExit: () => {}
-});
-slice.activate();
-
-// Стало (4.x)
-Tracer.traceCalls((event) => {
-  console.log(event.fullName);
-});
-
-Tracer.defineSlice('payment', {
-  predicate: (event) => event.fullName === 'Payment.process',
-  beforeCall: () => true,
-  afterCall: () => false
-});
-Tracer.enableSlice('payment');
-\`\`\`
-
----
-
-## 16. История изменений
+## 15. История изменений
 
 ### 4.3 (2024)
 - Объединение документации в единый файл
 - Добавлен раздел "Типичные ошибки"
-- Добавлен раздел "Миграция с версии 3.x"
 
 ### 4.2 (2024)
 - Добавлен ReportSliceUsage
@@ -1037,3 +967,4 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { mergedDocumentation, downloadDocumentation };
 }
+
