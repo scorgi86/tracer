@@ -26,6 +26,8 @@ Tracer не заменяет APM, production monitoring или обычные т
 - Нужно понять цепочку вызовов внутри конкретного пользовательского действия: клика, ввода с клавиатуры, paste, drag-and-drop. В общем потоке приложения такие действия смешиваются с фоновыми процессами и асинхронными обработчиками.
 - Нужно найти место, где конкретному объекту присваивается конкретное значение. Это особенно сложно, когда один и тот же класс постоянно клонируется или пересоздается: в лог попадают десятки похожих присвоений из разных инстансов, и нужное изменение трудно отличить от похожих.
 - Та же проблема возникает с методами и функциями: нужный вызов теряется среди множества похожих вызовов из других сценариев, объектов или фоновых потоков.
+- Есть подозрения в расхождении между описанием и реальным runtime-поведением (например, цепочка загрузки документа): неясно, какие классы и методы действительно участвуют.
+- Есть подсистемы с плотной цепочкой вызовов и высоким служебным шумом. Нужен быстрый способ отличить существенные шаги бизнес-логики от второстепенных служебных операций.
 
 Пример типичного источника шума:
 
@@ -163,10 +165,10 @@ const color = {
 
 **Проблема:** если наблюдать только свойства первого уровня, видно присваивание `color.rgba`, но не видно, где меняется `color.rgba.r` или `color.rgba.a`. При обычном `console.log` приходится вручную добавлять логи в разные места или отдельно оборачивать объект, который лежит внутри `rgba`.
 
-**Решение:** `Tracer.observePropertyObject(...)` позволяет наблюдать вложенный объект как часть исходного свойства и получать события по полному пути свойства.
+**Решение:** `Tracer.observePropertyObject(...)` позволяет повесить наблюдение на объект, который лежит внутри свойства, и получать события по полному пути.
 
 ```js
-Tracer.observePropertyObject(color, "rgba", "Color");
+Tracer.observePropertyObject(color.rgba, "rgba", "Color");
 
 Tracer.traceProperties((event) => {
   if (event.fullName === "Color.rgba.r") {
@@ -226,6 +228,96 @@ Tracer.traceCalls((event) => {
 ```
 
 `console.trace()` внутри такого обработчика покажет путь до callback-а подписки Tracer: emitter, proxy/wrapper и внутренние функции трассировки. `event.callStack.trace(...)` показывает логический стек приложения: какие наблюдаемые функции и методы привели к целевому вызову.
+
+### Проверка цепочки загрузки документа
+
+**Сценарий:** нужно быстро проверить, как у вас действительно работает загрузка документа в runtime: какие классы и методы участвуют, в каком порядке и какие ветки исполняются.
+
+**Проблема:** внешняя документация описывает желаемое поведение, но в вашем окружении и конкретном сценарии неясно, что реально вызывается. Попытка добавить логи вручную размывает картину и не даёт цельной структуры вызовов.
+
+**Решение:** оборачивайте только путь загрузки в отдельный срез `DocLoad`, собирайте в нём tree и usage отчёты и уменьшайте объём наблюдения до целевой цепочки.
+
+```js
+const { ReportTreeView, ReportUsage } = Tracer.reports;
+const treeReport = new ReportTreeView();
+const usageReport = new ReportUsage({ logProvider: console });
+
+Tracer.defineSlice("DocLoad", {
+  predicate: ({ fullName, args }) =>
+    fullName === "DocumentService.openDocument" &&
+    args?.[0]?.type === "open",
+  beforeCall: () => true,
+  afterCall: () => false,
+});
+
+Tracer.traceBySlice("DocLoad", (event) => {
+  if (event.place === "before") {
+    treeReport.log(event, JSON.stringify(event.args || []));
+    usageReport.log({
+      className: event.className,
+      fnKey: event.fnKey,
+    });
+  } else {
+    treeReport.log(event);
+  }
+});
+
+// Прогоняем конкретный сценарий открытия документа.
+documentController.openDocument({ type: "open", docId: 42 });
+
+console.log(treeReport.getResults().join("\n"));
+usageReport.print();
+```
+
+### Отладка производительности и шума в графическом рендере
+
+**Сценарий:** нужно быстро понять, как работает 2D/3D рендер-контур (`renderFrame`, `draw`, `tick`) и где теряются кадры, не разбирая вручную весь слой логов.
+
+**Проблема:** рендер содержит много фоновых и служебных вызовов. Даже с обычными логами вы видите только «шум» вместо причинно-следственной цепочки: какой шаг рендера выполняется лишний раз, где лишние пересборки, и какой узел добавил задержку.
+
+**Решение:** ограничьте трассировку одним слайсом `RenderFlow`, собирайте только вызовы, относящиеся к кадру/сцене, и используйте `noisyCalls`/`callFilter` для уноса мусора. Параллельно считайте длительности (`durationMs`) по ключевым функциям (`renderFrame`, `submitScene`, `prepareFrame`) и сразу получаете список «дорогих» узлов.
+
+```js
+const { ReportUsage } = Tracer.reports;
+const usageReport = new ReportUsage({ logProvider: console });
+const renderCalls = [];
+
+Tracer.defineSlice("RenderFlow", {
+  predicate: ({ fullName, className }) =>
+    fullName === "Renderer.renderFrame" ||
+    className === "Renderer" ||
+    className === "SceneGraph",
+  beforeCall: () => true,
+  afterCall: () => false,
+});
+
+Tracer.traceBySlice("RenderFlow", (event) => {
+  if (event.place === "before") {
+    usageReport.log({
+      className: event.className,
+      fnKey: event.fnKey,
+    });
+
+    if (event.fnKey === "Renderer.renderFrame") {
+      console.log("frame start", event.args?.[0]?.frameId);
+    }
+  } else if (event.place === "after" && typeof event.durationMs === "number") {
+    renderCalls.push({
+      fnKey: event.fnKey,
+      durationMs: event.durationMs,
+      status: event.status,
+    });
+  }
+});
+
+// Прогоним несколько кадров/сценарий рендера.
+renderer.tick();
+
+usageReport.print();
+console.table(
+  renderCalls.sort((a, b) => b.durationMs - a.durationMs).slice(0, 20),
+);
+```
 
 ### Исследование производительности вызовов
 
@@ -505,35 +597,16 @@ Tracer.configureTracing({
 
 `ReportSliceUsage` собирает классы/методы/property get/set только внутри активного слайса и умеет строить diff между прогонами.
 
-## Скрипты
-
-```bash
-npm run build
-npm run lint
-npm test
-npm run test:coverage
-npm run perf:guard
-npm run perf:baseline
-npm run profile:check
-npm run errors:scan -- path/to/runtime.log
-```
-
-## Definition of Done (Release)
-
-Релиз считается готовым только если выполнены все пункты:
-
-- `npm run lint` проходит без ошибок
-- `npm run build` проходит и артефакты в `dist` актуальны
-- `npx jest --runInBand` проходит
-- `npm run test:docs-examples` проходит
-- `npm run profile:check` проходит
-- `npm run perf:guard` проходит
-- baseline производительности зафиксирован (`.perf-baseline.json`) и актуален
-- документация в `docs/` синхронизирована с текущим API
-
 ## Документация
 
-- [docs/readme.html](./docs/readme.html)
-- [docs/context.html](./docs/context.html)
-- [docs/reports.html](./docs/reports.html)
-- [Test-plan-1.md](./Test-plan-1.md)
+Полная документация собирается в `docs/`:
+
+```bash
+npm run docs:build
+```
+
+Проверка примеров из документации:
+
+```bash
+npm run test:docs-examples
+```
