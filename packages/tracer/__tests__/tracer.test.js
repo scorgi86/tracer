@@ -1,4 +1,4 @@
-const { Tracer } = require("../dist/tracer.umd.js");
+﻿const { Tracer } = require("../dist/tracer.umd.js");
 
 let seq = 0;
 const nextName = (prefix) => `${prefix}_${Date.now()}_${seq++}`;
@@ -47,10 +47,10 @@ describe("Tracer", () => {
     });
   });
 
-  test("observeProperty emits propertyGet/propertySet", () => {
+  test("observeProperties emits propertyGet/propertySet", () => {
     const events = [];
     const target = { value: 1 };
-    Tracer.observeProperty(target, "value", "Counter");
+    Tracer.observeProperties(target, { name: "Counter", properties: "value" });
     Tracer.traceAll((event) => events.push(event));
 
     const current = target.value;
@@ -66,7 +66,7 @@ describe("Tracer", () => {
     const events = [];
     const page = { m_nZoomValue: 100 };
 
-    Tracer.observeProperty(page, "m_nZoomValue", "CEditorPage");
+    Tracer.observeProperties(page, { name: "CEditorPage", properties: "m_nZoomValue" });
     Tracer.traceProperties((event) => events.push(event));
 
     page.m_nZoomValue = 120;
@@ -82,8 +82,8 @@ describe("Tracer", () => {
   test("traceProperty filters by property name string", () => {
     const events = [];
     const model = { zoom: 100, width: 200 };
-    Tracer.observeProperty(model, "zoom", "Page");
-    Tracer.observeProperty(model, "width", "Page");
+    Tracer.observeProperties(model, { name: "Page", properties: "zoom" });
+    Tracer.observeProperties(model, { name: "Page", properties: "width" });
     Tracer.traceProperty("zoom", (event) => events.push(event));
 
     model.zoom = 120;
@@ -96,9 +96,9 @@ describe("Tracer", () => {
   test("traceProperty filters by property names array", () => {
     const events = [];
     const model = { zoom: 100, width: 200, height: 300 };
-    Tracer.observeProperty(model, "zoom", "Page");
-    Tracer.observeProperty(model, "width", "Page");
-    Tracer.observeProperty(model, "height", "Page");
+    Tracer.observeProperties(model, { name: "Page", properties: "zoom" });
+    Tracer.observeProperties(model, { name: "Page", properties: "width" });
+    Tracer.observeProperties(model, { name: "Page", properties: "height" });
     Tracer.traceProperty(["zoom", "width"], (event) => events.push(event.propName));
 
     model.zoom = 120;
@@ -111,8 +111,8 @@ describe("Tracer", () => {
   test("traceProperty supports predicate selector", () => {
     const events = [];
     const model = { zoom: 100, width: 200 };
-    Tracer.observeProperty(model, "zoom", "Page");
-    Tracer.observeProperty(model, "width", "Page");
+    Tracer.observeProperties(model, { name: "Page", properties: "zoom" });
+    Tracer.observeProperties(model, { name: "Page", properties: "width" });
     Tracer.traceProperty(
       (event) => event.propName === "zoom" && event.eventType === "propertySet",
       (event) => events.push(event),
@@ -127,10 +127,14 @@ describe("Tracer", () => {
     expect(events[0]).toMatchObject({ propName: "zoom", eventType: "propertySet", value: 120 });
   });
 
-  test("observePropertyObject tracks nested get/set paths", () => {
+  test("observeProperties tracks nested get/set paths", () => {
     const events = [];
     const nested = { city: "Ekb", zip: 620000 };
-    const wrapped = Tracer.observePropertyObject(nested, "address", "User");
+    const wrapped = Tracer.observeProperties(nested, {
+      name: "User",
+      properties: "address",
+      deep: true,
+    });
     Tracer.traceProperties((event) => events.push(event));
 
     const city = wrapped.city;
@@ -141,12 +145,11 @@ describe("Tracer", () => {
     expect(events.map((e) => e.eventType)).toEqual(["propertyGet", "propertySet"]);
   });
 
-  test("observePropertyObject wraps only first level by default", () => {
+  test("observeProperties wraps only first level by default", () => {
     const events = [];
-    const wrapped = Tracer.observePropertyObject(
+    const wrapped = Tracer.observeProperties(
       { nested: { value: 7 } },
-      "root",
-      "DeepObj",
+      { name: "DeepObj", properties: "root", deep: true },
     );
     Tracer.traceProperties((event) => events.push(event));
 
@@ -157,21 +160,28 @@ describe("Tracer", () => {
     expect(events.map((e) => e.propName)).toEqual(["root.nested"]);
   });
 
-  test("observePropertyObject uses non-proxy mode by default", () => {
+  test("observeProperties uses non-proxy mode by default", () => {
     const target = { a: 1 };
-    const wrapped = Tracer.observePropertyObject(target, "root", "Obj");
+    const wrapped = Tracer.observeProperties(target, {
+      name: "Obj",
+      properties: "root",
+      deep: true,
+    });
 
     expect(wrapped).toBe(target);
     expect(wrapped.__isProxy).toBeUndefined();
   });
 
-  test("observePropertyObject ignores proxy mode for objects with own methods", () => {
+  test("observeProperties ignores proxy mode for objects with own methods", () => {
     const target = {
       Read_FromBinary2() {
         return "ok";
       },
     };
-    const wrapped = Tracer.observePropertyObject(target, "element", "Element", {
+    const wrapped = Tracer.observeProperties(target, {
+      name: "Element",
+      properties: "element",
+      deep: true,
       useProxy: true,
       maxDepth: 2,
       shouldWrap: () => true,
@@ -182,13 +192,18 @@ describe("Tracer", () => {
     expect(wrapped.Read_FromBinary2()).toBe("ok");
   });
 
-  test("observePropertyObject supports configurable wrapping depth", () => {
+  test("observeProperties supports configurable wrapping depth", () => {
     const events = [];
-    const wrapped = Tracer.observePropertyObject(
+    const wrapped = Tracer.observeProperties(
       { nested: { value: 7 } },
-      "root",
-      "DeepObj",
-      { useProxy: true, maxDepth: 2, shouldWrap: () => true },
+      {
+        name: "DeepObj",
+        properties: "root",
+        deep: true,
+        useProxy: true,
+        maxDepth: 2,
+        shouldWrap: () => true,
+      },
     );
     Tracer.traceProperties((event) => events.push(event));
 
@@ -198,14 +213,15 @@ describe("Tracer", () => {
     expect(events.map((e) => e.propName)).toEqual(["root.nested", "root.nested.value"]);
   });
 
-  test("observePropertyObject enables wrapping on the fly via condition", () => {
+  test("observeProperties enables wrapping on the fly via condition", () => {
     const events = [];
     let isWrapEnabled = false;
-    const wrapped = Tracer.observePropertyObject(
+    const wrapped = Tracer.observeProperties(
       { nested: { value: 7 } },
-      "root",
-      "DeepObj",
       {
+        name: "DeepObj",
+        properties: "root",
+        deep: true,
         useProxy: true,
         maxDepth: 2,
         shouldWrap: () => isWrapEnabled,
@@ -226,14 +242,17 @@ describe("Tracer", () => {
     ]);
   });
 
-  test("observePropertyObject does not break Symbol.toPrimitive access", () => {
-    const wrapped = Tracer.observePropertyObject({ value: 1 }, "payload", "Payload");
+  test("observeProperties does not break Symbol.toPrimitive access", () => {
+    const wrapped = Tracer.observeProperties(
+      { value: 1 },
+      { name: "Payload", properties: "payload", deep: true },
+    );
 
     expect(() => Number(wrapped)).not.toThrow();
     expect(wrapped[Symbol.toPrimitive]).toBeUndefined();
   });
 
-  test("observePropertyObject keeps class method receiver compatible with private fields", () => {
+  test("observeProperties keeps class method receiver compatible with private fields", () => {
     class CGlobalImageLoader {
       #name = "ok";
       getName() {
@@ -241,17 +260,16 @@ describe("Tracer", () => {
       }
     }
 
-    const wrapped = Tracer.observePropertyObject(
+    const wrapped = Tracer.observeProperties(
       new CGlobalImageLoader(),
-      "imageLoader",
-      "ImageLoader",
+      { name: "ImageLoader", properties: "imageLoader", deep: true },
     );
 
     expect(() => wrapped.getName()).not.toThrow();
     expect(wrapped.getName()).toBe("ok");
   });
 
-  test("observeProperty preserves receiver for accessor getters", () => {
+  test("observeProperties preserves receiver for accessor getters", () => {
     const target = {};
     let child;
     Object.defineProperty(target, "token", {
@@ -265,13 +283,13 @@ describe("Tracer", () => {
       },
     });
 
-    Tracer.observeProperty(target, "token", "Accessor");
+    Tracer.observeProperties(target, { name: "Accessor", properties: "token" });
     child = Object.create(target);
 
     expect(child.token).toBe("ok");
   });
 
-  test("observeProperty does not replace accessor-set function value with undefined", () => {
+  test("observeProperties does not replace accessor-set function value with undefined", () => {
     const target = {
       _handler: () => "initial",
       get handler() {
@@ -282,7 +300,7 @@ describe("Tracer", () => {
       },
     };
 
-    Tracer.observeProperty(target, "handler", "AccessorFunc");
+    Tracer.observeProperties(target, { name: "AccessorFunc", properties: "handler" });
 
     const nextFn = () => "next";
     target.handler = nextFn;
@@ -292,21 +310,25 @@ describe("Tracer", () => {
     expect(target.handler()).toBe("next");
   });
 
-  test("observePropertyObject skips proxying EventTarget host objects", () => {
+  test("observeProperties skips proxying EventTarget host objects", () => {
     if (typeof EventTarget === "undefined") {
       return;
     }
 
     const host = new EventTarget();
-    const wrapped = Tracer.observePropertyObject(host, "host", "Host");
+    const wrapped = Tracer.observeProperties(host, {
+      name: "Host",
+      properties: "host",
+      deep: true,
+    });
 
     expect(wrapped).toBe(host);
   });
 
-  test("observeAllProperties tracks all non-function own props", () => {
+  test("observeProperties tracks all non-function own props", () => {
     const target = { a: 1, b: 2, fn() { return 1; } };
     const events = [];
-    Tracer.observeAllProperties(target, "Obj");
+    Tracer.observeProperties(target, { name: "Obj", properties: true });
     Tracer.traceProperties((event) => events.push(event));
 
     const a = target.a;
@@ -358,7 +380,7 @@ describe("Tracer", () => {
     const target = { value: 1 };
 
     Tracer.observe(target, "PlainObj");
-    Tracer.observeProperty(target, "value", "PlainObj");
+    Tracer.observeProperties(target, { name: "PlainObj", properties: "value" });
     Tracer.traceAll((event) => events.push(event));
 
     target.value;
@@ -575,7 +597,7 @@ describe("Tracer", () => {
     const props = [];
     const fn = Tracer.createProxyFn(() => 7, "seven");
     const target = { value: 1 };
-    Tracer.observeProperty(target, "value", "Num");
+    Tracer.observeProperties(target, { name: "Num", properties: "value" });
 
     Tracer.traceCalls((e) => calls.push(e));
     Tracer.traceProperties((e) => props.push(e));
@@ -599,7 +621,7 @@ describe("Tracer", () => {
     const events = [];
     const target = { value: 1 };
 
-    Tracer.observeProperty(target, "value", "Counter");
+    Tracer.observeProperties(target, { name: "Counter", properties: "value" });
     Tracer.traceProperties((event) => events.push(event));
 
     target.value;
@@ -691,62 +713,6 @@ describe("Tracer", () => {
     expect(batches[0][0].eventType).toBe("functionCall");
   });
 
-  test("exportSliceScenarios/importSliceScenarios roundtrip with trusted parser", () => {
-    const sourceSlice = nextName("exported");
-    const targetSlice = nextName("imported");
-    const fn = Tracer.createProxyFn(() => "ok", "act");
-    const hits = [];
-
-    Tracer.defineSlice(sourceSlice, {
-      predicate: (args) => args.fnKey === "act",
-      beforeCall: () => true,
-      afterCall: () => false,
-      initial: false,
-      description: "test scenario",
-    });
-
-    const payload = Tracer.exportSliceScenarios();
-    const sourceConfig = payload.slices.find((x) => x.name === sourceSlice);
-    sourceConfig.name = targetSlice;
-    payload.slices = [sourceConfig];
-
-    Tracer.importSliceScenarios(payload, {
-      overwrite: true,
-      activate: true,
-      functionParser: (source) => new Function(`return (${source});`)(),
-    });
-    Tracer.traceBySlice(targetSlice, (event) => hits.push(event));
-    fn();
-
-    expect(hits).toHaveLength(1);
-    expect(hits[0].place).toBe("before");
-    expect(Tracer.getRegisteredSlices()).toContain(targetSlice);
-  });
-
-  test("importSliceScenarios validates payload", () => {
-    expect(() => Tracer.importSliceScenarios(null)).toThrow();
-    expect(() => Tracer.importSliceScenarios({})).toThrow();
-    expect(() => Tracer.importSliceScenarios({ slices: {} })).toThrow();
-  });
-
-  test("importSliceScenarios safe mode does not execute serialized functions", () => {
-    const payload = {
-      slices: [
-        {
-          name: nextName("safe_slice"),
-          predicate: "(args) => args.fnKey === 'act'",
-          beforeCall: "() => true",
-          afterCall: "() => false",
-        },
-      ],
-    };
-
-    Tracer.importSliceScenarios(payload, { overwrite: true, activate: true });
-
-    expect(Tracer.getRegisteredSlices()).toContain(payload.slices[0].name);
-    expect(Tracer.tracerState.get(payload.slices[0].name)).toBe(false);
-  });
-
   test("function call emits error status for thrown errors", () => {
     const events = [];
     const fn = Tracer.createProxyFn(() => {
@@ -766,7 +732,7 @@ describe("Tracer", () => {
     const events = [];
     const target = { count: 1 };
 
-    Tracer.observeProperty(target, "count", "Counter");
+    Tracer.observeProperties(target, { name: "Counter", properties: "count" });
     Tracer.traceProperties((event) => events.push(event));
 
     target.count = 2;
@@ -936,7 +902,7 @@ describe("Tracer", () => {
     Tracer.setTraceProfile("full");
     const model = { zoom: 100 };
     const globalPropertyEvents = [];
-    Tracer.observeProperty(model, "zoom", "CEditorPage");
+    Tracer.observeProperties(model, { name: "CEditorPage", properties: "zoom" });
     Tracer.traceProperties((event) => globalPropertyEvents.push(event.fullName));
 
     const start = Tracer.createProxyFn(() => "start", "startRun");
@@ -970,8 +936,8 @@ describe("Tracer", () => {
   test("ReportSliceUsage: computes diff between slice runs", () => {
     Tracer.setTraceProfile("full");
     const model = { zoom: 100, width: 50 };
-    Tracer.observeProperty(model, "zoom", "CEditorPage");
-    Tracer.observeProperty(model, "width", "CEditorPage");
+    Tracer.observeProperties(model, { name: "CEditorPage", properties: "zoom" });
+    Tracer.observeProperties(model, { name: "CEditorPage", properties: "width" });
 
     const start = Tracer.createProxyFn(() => "start", "startRunDiff");
     const end = Tracer.createProxyFn(() => "end", "endRunDiff");

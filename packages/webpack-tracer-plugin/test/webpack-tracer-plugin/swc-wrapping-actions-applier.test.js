@@ -5,8 +5,17 @@ const getTracerFacadeCode = require("../../src/tracer/tracerFacadeCode.js");
 describe("wrapping actions applier", () => {
     const hasObserverCall = (statements, observerName) =>
         statements.some(
-            (statement) =>
-                statement?.expression?.callee?.property?.value === observerName
+            (statement) => {
+                const expression = statement?.expression;
+                if (expression?.callee?.property?.value === observerName) {
+                    return true;
+                }
+                const right = expression?.right;
+                const callExpression = right?.type === "BinaryExpression" && right.operator === "||"
+                    ? right.left
+                    : right;
+                return callExpression?.callee?.property?.value === observerName;
+            }
         );
 
     test("applies instance wrap after assignment index", () => {
@@ -32,7 +41,7 @@ describe("wrapping actions applier", () => {
 
         expect(modified).toBe(true);
         expect(bodyStatements).toHaveLength(4);
-        expect(hasObserverCall(bodyStatements.slice(1, 3), "observeProperty")).toBe(true);
+        expect(hasObserverCall(bodyStatements.slice(1, 3), "createProxyFn")).toBe(true);
     });
 
     test("applies prototype wrap after prototype statement index", () => {
@@ -89,7 +98,7 @@ describe("wrapping actions applier", () => {
         });
 
         const bodyStatements = parseHookStatements(
-            `${getTracerFacadeCode()}\nTracer.observeProperty(this, "init", "CEditorPage");`,
+            `${getTracerFacadeCode()}\nthis["init"] = Tracer.createProxyFn(this["init"], "init", "CEditorPage") || this["init"];`,
             { debug: false }
         );
 
@@ -103,7 +112,7 @@ describe("wrapping actions applier", () => {
         ]);
 
         expect(modified).toBe(false);
-        expect(applier.collectExistingObserverSignatures(bodyStatements).has("observeProperty:CEditorPage:init")).toBe(true);
+        expect(applier.collectExistingObserverSignatures(bodyStatements).has("instanceProxy:CEditorPage:init")).toBe(true);
     });
 
     test("dedupes existing prototype observer insertion", () => {

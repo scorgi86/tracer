@@ -1,4 +1,4 @@
-const { Tracer } = require("../dist/tracer.umd.js");
+﻿const { Tracer } = require("../dist/tracer.umd.js");
 
 let seq = 0;
 const nextName = (prefix) => `${prefix}_${Date.now()}_${seq++}`;
@@ -44,7 +44,7 @@ describe("Tracer regression critical", () => {
     };
 
     Tracer.observe(service, "Svc");
-    Tracer.observeProperty(model, "value", "Model");
+    Tracer.observeProperties(model, { name: "Model", properties: "value" });
     Tracer.defineSlice(sliceName, {
       predicate: (e) => e.fullName === "Svc.run",
       beforeCall: () => true,

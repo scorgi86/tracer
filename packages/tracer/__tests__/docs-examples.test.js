@@ -82,7 +82,7 @@ describe("Documentation examples", () => {
     ]);
   });
 
-  test("properties example: observeProperty + traceProperties tracks set value", () => {
+  test("properties example: observeProperties + traceProperties tracks set value", () => {
     class Order {
       constructor() {
         this.status = "pending";
@@ -91,7 +91,7 @@ describe("Documentation examples", () => {
 
     const order = new Order();
     const events = [];
-    Tracer.observeProperty(order, "status", "Order");
+    Tracer.observeProperties(order, { name: "Order", properties: "status" });
     Tracer.traceProperties((event) => events.push(event));
 
     order.status = "approved";
@@ -283,7 +283,7 @@ describe("Documentation examples", () => {
     ]);
   });
 
-  test("readme: observePropertyObject tracks nested rgba assignment path", () => {
+  test("readme: observeProperties tracks nested rgba assignment path", () => {
     const color = {
       rgba: {
         r: "",
@@ -294,7 +294,11 @@ describe("Documentation examples", () => {
     };
     const propertyEvents = [];
 
-    Tracer.observePropertyObject(color.rgba, "rgba", "Color");
+    Tracer.observeProperties(color.rgba, {
+      name: "Color",
+      properties: "rgba",
+      deep: true,
+    });
     Tracer.traceProperties((event) => {
       if (event.fullName === "Color.rgba.r") {
         propertyEvents.push(event);

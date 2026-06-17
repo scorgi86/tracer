@@ -1,4 +1,4 @@
-const { Tracer } = require("../dist/tracer.umd.js");
+﻿const { Tracer } = require("../dist/tracer.umd.js");
 const fs = require("fs");
 const path = require("path");
 
@@ -214,7 +214,7 @@ describe("Tracer refactor contract", () => {
     const events = [];
     const model = { zoom: 1 };
 
-    Tracer.observeProperty(model, "zoom", "TracePropertiesModel");
+    Tracer.observeProperties(model, { name: "TracePropertiesModel", properties: "zoom" });
     Tracer.traceProperties((event) => {
       events.push(event.eventType);
     });
@@ -300,7 +300,7 @@ describe("Tracer refactor contract", () => {
     const events = [];
     const model = { zoom: 1 };
 
-    Tracer.observeProperty(model, "zoom", "Model");
+    Tracer.observeProperties(model, { name: "Model", properties: "zoom" });
     Tracer.traceProperty({ selector: "zoom" }, (event) => {
       events.push(event);
     });
@@ -357,5 +357,145 @@ describe("Tracer refactor contract", () => {
 
     expect(tracerSource.includes("window.Tracer")).toBe(false);
     expect(indexSource.includes("window.Tracer = Tracer")).toBe(true);
+  });
+
+  describe("canonical Tracer.trace subscription API migration contract", () => {
+    test("Tracer.trace(callback) behaves like traceAll(callback) and returns unsubscribe", () => {
+      const events = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceAll");
+      const model = { zoom: 1 };
+
+      Tracer.observeProperties(model, { name: "CanonicalTraceAllModel", properties: "zoom" });
+      const unsubscribe = Tracer.trace((event) => {
+        events.push(event.eventType);
+      });
+
+      fn(1);
+      model.zoom = 2;
+      unsubscribe();
+      fn(2);
+
+      expect(typeof unsubscribe).toBe("function");
+      expect(events).toEqual(["functionCall", "functionCall", "propertySet"]);
+    });
+
+    test("Tracer.trace(callback, { eventTypes: 'calls' }) behaves like traceCalls(callback)", () => {
+      const events = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceCalls");
+      const model = { zoom: 1 };
+
+      Tracer.observeProperties(model, { name: "CanonicalTraceCallsModel", properties: "zoom" });
+      Tracer.trace((event) => {
+        events.push(event.eventType);
+      }, { eventTypes: "calls" });
+
+      fn(1);
+      model.zoom = 2;
+
+      expect(events).toEqual(["functionCall", "functionCall"]);
+    });
+
+    test("Tracer.trace(callback, { eventTypes: 'properties' }) behaves like traceProperties(callback)", () => {
+      const events = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceProperties");
+      const model = { zoom: 1 };
+
+      Tracer.observeProperties(model, { name: "CanonicalTracePropertiesModel", properties: "zoom" });
+      Tracer.trace((event) => {
+        events.push(event.eventType);
+      }, { eventTypes: "properties" });
+
+      fn(1);
+      model.zoom = 2;
+      model.zoom;
+
+      expect(events).toEqual(["propertySet", "propertyGet"]);
+    });
+
+    test("Tracer.trace(callback, { property }) behaves like traceProperty(property, callback)", () => {
+      const events = [];
+      const model = { zoom: 1, page: 1 };
+
+      Tracer.observeProperties(model, { name: "CanonicalTracePropertyModel", properties: ["zoom", "page"] });
+      Tracer.trace((event) => {
+        events.push(event.propName);
+      }, { eventTypes: "properties", property: "zoom" });
+
+      model.zoom = 2;
+      model.page = 2;
+
+      expect(events).toEqual(["zoom"]);
+    });
+
+    test("Tracer.trace(callback, { slice }) behaves like traceBySlice(slice, callback)", () => {
+      const sliceName = nextName("canonical-slice");
+      const events = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceSlice");
+
+      Tracer.defineSlice(sliceName, {
+        predicate: (event) => event.fnKey === "canonicalTraceSlice",
+        beforeCall: () => true,
+        afterCall: () => true,
+      });
+      Tracer.enableSlice(sliceName);
+      Tracer.trace((event) => {
+        events.push(event.place);
+      }, { slice: sliceName });
+
+      fn(1);
+
+      expect(events).toEqual(["before", "after"]);
+    });
+
+    test("Tracer.trace(callback, { slice, once: true }) behaves like traceBySliceOnce(slice, callback)", () => {
+      const sliceName = nextName("canonical-slice-once");
+      const events = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceSliceOnce");
+
+      Tracer.defineSlice(sliceName, {
+        predicate: (event) => event.fnKey === "canonicalTraceSliceOnce",
+        beforeCall: () => true,
+        afterCall: () => true,
+      });
+      Tracer.enableSlice(sliceName);
+      Tracer.trace((event) => {
+        events.push(event.place);
+      }, { slice: sliceName, once: true });
+
+      fn(1);
+      fn(2);
+
+      expect(events).toEqual(["before"]);
+    });
+
+    test("Tracer.trace(callback, { batch }) behaves like traceAllBatched(callback, batch)", async () => {
+      const batches = [];
+      const fn = Tracer.createProxyFn((value) => value + 1, "canonicalTraceBatch");
+
+      Tracer.trace((events) => {
+        batches.push(events.map((event) => event.place));
+      }, {
+        eventTypes: "calls",
+        batch: {
+          maxBatchSize: 2,
+          flushIntervalMs: 1000,
+          bufferSize: 10,
+        },
+      });
+
+      fn(1);
+
+      expect(batches).toEqual([["before", "after"]]);
+    });
+
+    test("legacy trace* wrappers keep returning Tracer during the compatibility period", () => {
+      expect(Tracer.traceAll(() => {})).toBe(Tracer);
+      expect(Tracer.traceCalls(() => {})).toBe(Tracer);
+      expect(Tracer.traceProperties(() => {})).toBe(Tracer);
+      expect(Tracer.traceProperty("zoom", () => {})).toBe(Tracer);
+      expect(Tracer.traceAllBatched(() => {})).toBe(Tracer);
+      expect(Tracer.traceCallsBatched(() => {})).toBe(Tracer);
+      expect(Tracer.tracePropertiesBatched(() => {})).toBe(Tracer);
+    });
   });
 });

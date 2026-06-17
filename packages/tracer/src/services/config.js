@@ -20,7 +20,7 @@ export const buildTraceOptions = (options = {}) => ({
   noisyProperties: toArray(options.noisyProperties, []),
   callFilter: typeof options.callFilter === "function" ? options.callFilter : null,
   propertyFilter: typeof options.propertyFilter === "function" ? options.propertyFilter : null,
-  captureContext: options.captureContext === true,
+  captureContext: options.captureContext !== false,
   throwSubscriberErrors: options.throwSubscriberErrors !== false,
   onSubscriberError: typeof options.onSubscriberError === "function"
     ? options.onSubscriberError

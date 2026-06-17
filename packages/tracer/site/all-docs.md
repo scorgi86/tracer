@@ -145,8 +145,6 @@ const { Tracer, Reports } = require("tracer");
 ### `Tracer.getRegisteredSlices()`
 - Возврат: `string[]`
 
-### `Tracer.defineSliceByCall(sliceName, target, targetFnName, predicate?)`
-### `Tracer.defineSliceByFunctionName(sliceName, fnName)`
 - Назначение: вспомогательные способы определения слайсов
 - Возврат: зависит от метода (обычно `Function`/`void`)
 
@@ -198,8 +196,6 @@ const { Tracer, Reports } = require("tracer");
 - Назначение: получить текущий async-контекст
 - Возврат: `object|null`
 
-### `Tracer.exportSliceScenarios(options = {})`
-### `Tracer.importSliceScenarios(payload, options = {})`
 - Назначение: экспорт/импорт сценариев слайсов
 - Возврат: `object|void`
 
@@ -1606,11 +1602,8 @@ Tracer.debugOnceOn(eventName, conditionCallback);
 
 // Вспомогательные методы
 Tracer.getCurrentContext();
-Tracer.defineSliceByFunction(sliceName, fn);
-Tracer.defineSliceByFunctionName(sliceName, fnName);
 Tracer.defineSliceByCall(sliceName, target, targetFnName, predicate);
-Tracer.exportSliceScenarios(options);
-Tracer.importSliceScenarios(payload, options);
+Tracer.defineSliceByFunction(sliceName, fn);
 
 // Статические свойства
 Tracer.tracerState;  // Map с состояниями слайсов

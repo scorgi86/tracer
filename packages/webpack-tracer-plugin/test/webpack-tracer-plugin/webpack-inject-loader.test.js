@@ -1,4 +1,4 @@
-﻿const path = require("path");
+const path = require("path");
 const fs = require("fs");
 const InjectLoader = require("../../src/InjectLoader.js");
 const TracerCodeGenerator = require("../../src/TracerCodeGenerator.js");
@@ -27,7 +27,7 @@ describe("InjectConstructorCodePlugin", () => {
             generateCode: {
                 construct: ({ className }) => {
                     if (targetsConfig[className]) {
-                        return TracerCodeGenerator.observePropertyAll(className, targetsConfig[className]).trim();
+                        return TracerCodeGenerator.observePropertiesList(className, targetsConfig[className]).trim();
                     }
                     return "";
                 }
@@ -43,9 +43,10 @@ describe("InjectConstructorCodePlugin", () => {
         Object.keys(targetsConfig).forEach(className => {
             const classProps = targetsConfig[className];
 
+            expect(newCode.includes("Tracer.observeProperties")).toBe(true);
+            expect(newCode.includes(className)).toBe(true);
             classProps.forEach((propName) => {
-                const pos = newCode.indexOf(TracerCodeGenerator.observeProperty(className, propName));
-                expect(pos > -1).toBe(true);
+                expect(newCode.includes(propName)).toBe(true);
             });
         });
 
@@ -57,12 +58,14 @@ describe("InjectConstructorCodePlugin", () => {
         const loaderByCallback = new InjectLoader({
             targets: (className) => className === "CEditorPage",
             generateCode: {
-                construct: ({ className }) => TracerCodeGenerator.observeAllProperties(className)
+                construct: ({ className }) => TracerCodeGenerator.observePropertiesAll(className)
             },
         });
 
         const newCode = loaderByCallback.processCode(source);
-        expect(newCode.includes("Tracer.observeAllProperties(this, 'CEditorPage');")).toBe(true);
+        expect(newCode.includes("Tracer.observeProperties")).toBe(true);
+        expect(newCode.includes("CEditorPage")).toBe(true);
+        expect(newCode.includes("properties: true")).toBe(true);
         expect(newCode.includes("__WEBPACK_TRACER_PATCHED_CLASSES__")).toBe(true);
     });
 
@@ -70,12 +73,12 @@ describe("InjectConstructorCodePlugin", () => {
         const loaderByCallback = new InjectLoader({
             targets: () => false,
             generateCode: {
-                construct: ({ className }) => TracerCodeGenerator.observeAllProperties(className)
+                construct: ({ className }) => TracerCodeGenerator.observePropertiesAll(className)
             },
         });
 
         const newCode = loaderByCallback.processCode(source);
-        expect(newCode.includes("Tracer.observeAllProperties(")).toBe(false);
+        expect(newCode.includes("Tracer.observeProperties(")).toBe(false);
         expect(newCode.includes("__WEBPACK_TRACER_PATCHED_CLASSES__")).toBe(false);
     });
 

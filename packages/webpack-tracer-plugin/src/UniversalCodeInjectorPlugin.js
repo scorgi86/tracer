@@ -52,15 +52,21 @@ class UniversalCodeInjectorPlugin {
     }
   }
 
-  createTracerBootstrapCode() {
+  createTracerBootstrapCode(compiler) {
     const tracerRuntimePath = this.resolveTracerRuntimePath().replace(/\\/g, "\\\\");
+    const mode = compiler && compiler.options ? compiler.options.mode : "";
+    const watchMode = !!(compiler && compiler.watchMode);
+    const refreshInWatch =
+      this._options.refreshTracerRuntimeInWatch !== false &&
+      (watchMode || mode === "development");
     return [
       ';(function bootstrapWebpackTracerRuntime(){',
       '  // __WEBPACK_TRACER_RUNTIME_BOOTSTRAP__',
       '  if (typeof globalThis === "undefined") {',
       '    return;',
       '  }',
-      `  if (globalThis.${TRACER_BOOTSTRAP_FLAG} === true) {`,
+      `  var refreshTracerRuntime = ${refreshInWatch ? "true" : "false"};`,
+      `  if (globalThis.${TRACER_BOOTSTRAP_FLAG} === true && !refreshTracerRuntime) {`,
       '    return;',
       '  }',
       '  try {',
@@ -133,9 +139,13 @@ class UniversalCodeInjectorPlugin {
     }
 
     if (this._options.injectTracerRuntimeFirst !== false) {
-      const tracerBootstrapCode = this.createTracerBootstrapCode();
+      const plugin = this;
+      const tracerRuntimePath = this.resolveTracerRuntimePath();
       new InjectPlugin.default(
-        () => tracerBootstrapCode,
+        function() {
+          this.addDependency(tracerRuntimePath);
+          return plugin.createTracerBootstrapCode(compiler);
+        },
         {
           entryName: () => true,
           entryOrder: ENTRY_ORDER.First,

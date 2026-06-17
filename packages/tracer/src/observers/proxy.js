@@ -217,9 +217,6 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
 
         const hasBeforeSubscribers = emitter.has('beforeCallMethod');
         const hasAfterSubscribers = emitter.has('afterCallMethod');
-        if (!hasBeforeSubscribers && !hasAfterSubscribers) {
-            return targetFn.apply(this, args);
-        }
         const startedAt = now();
         const data = {
             eventType: 'functionCall',
@@ -336,6 +333,24 @@ export const createProxyFn = ({fnKey, targetFn, className}) => {
             }
         });
     };
+    if (targetFn && typeof targetFn === "function") {
+        const targetDescriptor = Object.getOwnPropertyDescriptor(targetFn, "prototype");
+        if (targetDescriptor && "value" in targetDescriptor) {
+            try {
+                const proxyDescriptor = Object.getOwnPropertyDescriptor(proxyFn, "prototype");
+                if (!proxyDescriptor || proxyDescriptor.writable !== false) {
+                    proxyFn.prototype = targetDescriptor.value;
+                }
+            } catch (error) {
+                // best-effort compatibility for environments with non-configurable prototypes
+            }
+        }
+    }
+    try {
+        Object.setPrototypeOf(proxyFn, targetFn);
+    } catch (error) {
+        // keep proxy function usable even if setting prototype chain is not supported
+    }
     proxyFn[isProxySymbol] = true
     proxyFn.original = targetFn;
 

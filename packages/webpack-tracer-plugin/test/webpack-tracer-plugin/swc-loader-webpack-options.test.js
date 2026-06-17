@@ -93,6 +93,47 @@ class CEditorPage {
         expect(cacheableCalls[0]).toBe(true);
     });
 
+    test("can keep process cache in watch mode with explicit opt-out", async () => {
+        let loaderOptions;
+
+        jest.isolateModules(() => {
+            jest.doMock("../../src/SWCInjectLoader.js", () =>
+                jest.fn().mockImplementation((options) => {
+                    loaderOptions = options;
+                    return {
+                        processCode: (loaderSource) => Promise.resolve(loaderSource)
+                    };
+                })
+            );
+
+            const isolatedLoader = require("../../src/SWCInjectLoaderWebpack.js");
+            const context = {
+                resourcePath: "C:/tmp/loader-webpack-watch-cache.js",
+                getOptions: () => ({
+                    disableProcessCacheInWatch: false,
+                    targets: ["CEditorPage"],
+                    generateCode: {
+                        onConstructor: () => "globalThis.__watchProcessCacheOn = true;"
+                    }
+                }),
+                _compiler: { watchMode: true },
+                cacheable: jest.fn(),
+                async() {
+                    return (err) => {
+                        if (err) {
+                            throw err;
+                        }
+                    };
+                }
+            };
+
+            isolatedLoader.call(context, source);
+        });
+
+        expect(loaderOptions.disableProcessCacheInWatch).toBe(false);
+        expect(loaderOptions.disableProcessCache).toBe(false);
+    });
+
     test("passes targets callback through callback registry key", async () => {
         const { result } = await runLoader({
             source,

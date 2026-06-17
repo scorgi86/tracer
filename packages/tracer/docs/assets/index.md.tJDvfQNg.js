@@ -680,11 +680,8 @@ import{_ as i,H as a,f as n,i as h}from"./chunks/framework.Cvt1eIE0.js";const g=
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// Вспомогательные методы</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getCurrentContext</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">();</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">defineSliceByFunction</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sliceName, fn);</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">defineSliceByFunctionName</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sliceName, fnName);</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">defineSliceByCall</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sliceName, target, targetFnName, predicate);</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">exportSliceScenarios</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(options);</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">importSliceScenarios</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(payload, options);</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">defineSliceByFunction</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sliceName, fn);</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// Статические свойства</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Tracer.tracerState;  </span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// Map с состояниями слайсов</span></span>

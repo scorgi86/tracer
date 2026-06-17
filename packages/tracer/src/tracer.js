@@ -1,4 +1,4 @@
-import { emitter } from "./observers/constants.js";
+﻿import { emitter } from "./observers/constants.js";
 import { ExecutionContext } from "./observers/context.js";
 import { includesByPatterns } from "./patterns.js";
 import { isPlainObject } from "./object.js";
@@ -16,7 +16,6 @@ import {
 import * as reports from "./reports/index.js";
 import * as subscriptionService from "./services/subscriptions.js";
 import * as sliceService from "./services/slices.js";
-import * as scenarioService from "./services/scenarios.js";
 
 const stateConfigKey = Symbol("stateConfigKey");
 const instrumentationReportKey = Symbol("instrumentation-report");
@@ -41,7 +40,7 @@ const TRACE_PROFILES = Object.freeze({
     enableCalls: true,
     enableProperties: false,
     suppressNoisy: true,
-    captureContext: false,
+    captureContext: true,
   }),
   full: Object.freeze({
     profile: "full",
@@ -72,7 +71,20 @@ const normalizeObserveObjectOptions = (value) => {
   return {};
 };
 
-const observePropertyObjectShallow = (target, parentPropName, className) => {
+const normalizeObservePropertiesOptions = (target, options = {}) => {
+  if (typeof options === "string" || Array.isArray(options) || options === true) return { name: target?.constructor?.name || "Object", properties: options };
+  const normalized = options && typeof options === "object" ? options : {};
+  return { ...normalized, name: normalized.name || normalized.className || target?.constructor?.name || "Object", properties: normalized.properties === undefined ? true : normalized.properties };
+};
+const getObservePropertiesList = (target, properties) => {
+  if (properties === true) return Object.keys(target || {}).filter((key) => typeof target[key] !== "function");
+  if (typeof properties === "string") return [properties];
+  if (Array.isArray(properties)) return properties.filter((key) => typeof key === "string" && key.length > 0);
+  return [];
+};
+
+
+const observeNestedPropertyShallow = (target, parentPropName, className) => {
   if (!target || (typeof target !== "object" && typeof target !== "function")) {
     return target;
   }
@@ -213,19 +225,27 @@ const buildInstrumentationOptions = () => {
   };
 };
 
+const isSupportedTracePropertySelector = (selector) => {
+  if (typeof selector === "string" || typeof selector === "function") {
+    return true;
+  }
+
+  return Array.isArray(selector) && selector.every((item) => typeof item === "string");
+};
+
 /**
- * ������� ����� ������������� ��� ����������� ������� �������,
- * ������� � ��������� � ��������� ����������.
- * ������������� ����������� ������ ��� ������� �������, ������� � ��������
- * � ������������ ������������.
+ * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ,
+ * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+ * пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    */
 export class Tracer {
 
-  /** @type {object} ����������� ������ �� ��������� ������������� */
+  /** @type {object} пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ */
   static tracerState = tracerState;
 
   /**
-   * ������������ ���������� ��������� ����������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @param {object} options
    * @param {'stack'|'zone'} [options.asyncContext='stack']
    * @returns {typeof Tracer}
@@ -243,7 +263,7 @@ export class Tracer {
   static setTraceProfile(profileName = "balanced", overrides = {}) {
     const preset = TRACE_PROFILES[profileName];
     if (!preset) {
-      throw new Error(`����������� ������� �����������: ${profileName}`);
+      throw new Error(`пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ: ${profileName}`);
     }
     const nextOptions = setTraceOptions({
       ...preset,
@@ -274,138 +294,88 @@ export class Tracer {
   }
 
   /**
-   * ������� ������� ��� �������� � ����������� �� ������
-   * @param {Function} targetFn - ������� ��� �������
-   * @param {string} eventName - ��� �������, ������� ������������ ��� ������ �������
-   * @returns {Function} ��������� ������� � ������������ �����������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} targetFn - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} eventName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Function} пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
-  static createProxyFn = (targetFn, eventName) => {
-    if (!targetFn || typeof targetFn !== 'function') {
-      throw new Error('targetFn ������ ���� ��������');
-    }
-    return createProxyFn({
-      fnKey: eventName || targetFn.name,
-      targetFn,
-      className: "commonFn",
-    });
+  static createProxyFn = (targetFn, eventName, className) => {
+    if (!targetFn || typeof targetFn !== 'function') throw new Error('targetFn ?????? ???? ????????');
+    if (createProxyFn.isProxyFn(targetFn)) return targetFn;
+    return createProxyFn({ fnKey: eventName || targetFn.name, targetFn, className: className || "commonFn" });
   };
 
 
   /**
-   * ���������� �������-�������, ������� ����������� �������� ����� ����������� ������.
-   * ������ ������� ���������� ���������� � ����� ����� �������.
-   * @param {Function} originalConstructor - ����������� ������ ��� �������
-   * @param {string} className - ��� ������������ ������
-   * @returns {Function} ��������� �����������, ��������� ������������ ����������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+   * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+   * @param {Function} originalConstructor - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} className - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Function} пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observeConstructor(originalConstructor, className) {
     if (!originalConstructor || typeof originalConstructor !== 'function') {
-      throw new Error('originalConstructor ������ ���� ��������-�������������');
+      throw new Error('originalConstructor пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ');
     }
     const finalClassName = className || originalConstructor.name;
     if (!finalClassName) {
-      throw new Error('�� ������� ���������� ��� ������');
+      throw new Error('пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ');
     }
     return wrapConstructor(originalConstructor, finalClassName);
   }
 
   /**
-   * ����������� get/set ������ �������� ������� � �����������.
-   * ��������� � �������� ��������� ������� propertySet/propertyGet
-   * @param {object} target - ������� ������, ���������� ��������
-   * @param {string} propName - ��� �������� ��� ����������
-   * @param {string} [className] - ��� ������ ��� ������������� (�� ��������� target.constructor.name)
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * Explicitly observes properties on a target object.
+   * @param {object} target - Target object.
+   * @param {string|string[]|true|object} [options] - Property selector or options.
+   * @returns {object} Target object or Proxy in deep/proxy mode.
    */
-  static observeProperty(target, propName, className) {
-    wrapProxyPropDescriptor(
-      target,
-      propName,
-      className || target.constructor.name,
-    );
-
-    return Tracer;
-  }
-
-  /**
-   * ����������� target � Proxy � ����������� ��������� � ��� �������� target[propName].
-   * � ��������� ������ �� ��������� ���������� ���������� shallow-����� ��� Proxy.
-   * Proxy ���������� ���� � ������ ��� plain-object.
-   * @param {object} target - ������� ������, ��� �������� ����� ������������ ��������� � ��������
-   * @param {string} propName - ��� ��������
-   * @param {string|object|number} [classNameOrOptions] - ��� ������ ��� ��������� �������
-   * @param {object|number} [options] - ��������� ({ useProxy, shouldUseProxy, maxDepth, shouldWrap }) ��� ����� �������
-   * @returns {Proxy} ������-������, ������������� ������ � ��������
-   */
-  static observePropertyObject(target, propName, classNameOrOptions, options) {
-    let className = classNameOrOptions;
-    let resolvedOptions = normalizeObserveObjectOptions(options);
-
-    if (typeof classNameOrOptions === "number" || (typeof classNameOrOptions === "object" && classNameOrOptions !== null)) {
-      className = undefined;
-      resolvedOptions = normalizeObserveObjectOptions(classNameOrOptions);
+  static observeProperties(target, options = {}) {
+    const resolvedOptions = normalizeObservePropertiesOptions(target, options);
+    const finalClassName = resolvedOptions.name;
+    const properties = getObservePropertiesList(target, resolvedOptions.properties);
+    if (resolvedOptions.deep === true) {
+      const propName = properties[0];
+      if (!propName) return target;
+      const objectOptions = normalizeObserveObjectOptions(resolvedOptions);
+      const canUseProxy = isPlainObject(target) && (objectOptions.useProxy === true || (typeof objectOptions.shouldUseProxy === "function" && objectOptions.shouldUseProxy({ target, propName, className: finalClassName }) === true)) && !hasOwnFunctionProps(target);
+      if (canUseProxy) return wrapProperty(target, propName, finalClassName, objectOptions);
+      return observeNestedPropertyShallow(target, propName, finalClassName);
     }
-
-    const finalClassName = className || target?.constructor?.name || "Object";
-    const canUseProxy = isPlainObject(target) && (
-      resolvedOptions.useProxy === true ||
-      (typeof resolvedOptions.shouldUseProxy === "function" &&
-        resolvedOptions.shouldUseProxy({ target, propName, className: finalClassName }) === true)
-    ) && !hasOwnFunctionProps(target);
-
-    if (canUseProxy) {
-      return wrapProperty(
-        target,
-        propName,
-        finalClassName,
-        resolvedOptions,
-      );
-    }
-
-    return observePropertyObjectShallow(target, propName, finalClassName);
+    properties.forEach((propName) => wrapProxyPropDescriptor(target, propName, finalClassName));
+    return target;
   }
 
   /**
-   * ��������� �� ����� ���������� �������, �������� �������.
-   * ������ �������� ����� ������������ ������� propertyGet/propertySet ��� �������.
-   * @param {object} target - ������� ������ ��� ���������� �� ����� ����������
-   * @param {string} className - ��� ������ ��� �������������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   */
-  static observeAllProperties(target, className) {
-    Object.keys(target)
-      .filter((key) => typeof target[key] !== "function")
-      .forEach((propName) => {
-        Tracer.observeProperty(target, propName, className);
-      });
-
-    return Tracer;
-  }
-
-  /**
-   * ���������� ������� � ��������� �� ����� ���������� � �������� �������� �������
-   * @param {object} target - ������� ������ ��� �����������
-   * @param {string} targetName - ��� �������� �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {object} target - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} targetName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observe(target, targetName) {
     const finalTargetName = targetName || target?.name || target?.constructor?.name || "Object";
+    const protoInstrumentationMarker = "__tracerObservedPrototype__";
     const report = traverse(target, finalTargetName, buildInstrumentationOptions());
+    const targetCtor = target && typeof target === "object" ? target.constructor : null;
+    if (targetCtor && typeof targetCtor === "function" && targetCtor.prototype && targetCtor !== Object && targetCtor !== Function && targetCtor !== Array && targetCtor.prototype !== Object.prototype && targetCtor.prototype !== Function.prototype && targetCtor[protoInstrumentationMarker] !== true) {
+      const prototypeReport = traverse(targetCtor.prototype, targetCtor?.name || finalTargetName, buildInstrumentationOptions());
+      mergeInstrumentationReport(report, prototypeReport);
+      targetCtor[protoInstrumentationMarker] = true;
+    }
     Tracer.tracerState.set(instrumentationReportKey, report);
-
-    return Tracer;
+    return target;
   }
 
   /**
-   * ��������� �� ���������� ������, ���������� ��� ������ � ��������
-   * @param {Function} target - ����� ��� �����������
-   * @param {string} className - ��� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� � ������ ����������� ��������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} target - пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} className - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observePrototype(target, className) {
     if (!target.prototype) {
-      throw new Error(`�� ������ �������� ������ ${className}`);
+      throw new Error(`пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ ${className}`);
     }
     const finalClassName = className || target?.name || "AnonymousClass";
     const report = traverse(target.prototype, `${finalClassName}`, buildInstrumentationOptions());
@@ -415,9 +385,9 @@ export class Tracer {
   }
 
   /**
-   * ��������� �� ������� ��������
-   * @param {Array} targetList - ������ �������� ��� ����������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Array} targetList - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observeAll(targetList) {
     const targetValues = Array.isArray(targetList)
@@ -442,9 +412,9 @@ export class Tracer {
   }
 
   /**
-   * ��������� �� ����������� ���� ������� � ������
-   * @param {Array} targetList - ������ ������� ��� ����������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Array} targetList - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observePrototypeAll(targetList) {
     const targetValues = Array.isArray(targetList)
@@ -469,9 +439,9 @@ export class Tracer {
   }
 
   /**
-   * ��������� �� ����� ����������������� �������� �� ������
-   * @param {object} exportTarget - ������ �������� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {object} exportTarget - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observeFromExports(exportTarget) {
     const classList = Object.keys(exportTarget).filter((key) =>
@@ -497,9 +467,9 @@ export class Tracer {
   }
 
   /**
-   * ��������� �� ����������� ���� ���������������� ������� �� ������
-   * @param {object} exportTarget - ������ �������� ������
-   * @returns {Map} ����� ����������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {object} exportTarget - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Map} пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static observePrototypesFromExports(exportTarget) {
     let map = new Map();
@@ -529,8 +499,8 @@ export class Tracer {
   }
 
   /**
-   * ���������� ����� ��������� ������� ��������������.
-   * ������ ��� ����������� �������, ����� ����� �������/������� �� ���� ��������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+   * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @returns {object|null}
    */
   static getLastInstrumentationReport() {
@@ -548,18 +518,18 @@ export class Tracer {
   }
 
   /**
-   * ������� �������� ����������, ������� ���������� �� ������� config.predicate
-   * config.beforeCall() === true => ������ ��������
-   * config.afterCall() === false => ��������� ��������
-   * @param {string} streamSliceName - ��� ������ � ������ ������� �������
-   * @param {object|Function} config - ��������� ������ ��� �������-��������
-   * @param {Function} [config.predicate] - �������-�������� ��� ����������� ������/����� ������
-   * @param {Function} [config.beforeCall] - ���������� ����� ������� �������
-   * @param {Function} [config.afterCall] - ���������� ����� ������ �������
-   * @param {*} [config.initial] - ��������� �������� ��������� ������
-   * @param {string} [config.description] - �������� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� ����� � ����� ������ ��� ���������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ config.predicate
+   * config.beforeCall() === true => пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * config.afterCall() === false => пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} streamSliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {object|Function} config - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} [config.predicate] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} [config.beforeCall] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} [config.afterCall] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {*} [config.initial] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} [config.description] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static defineSlice(streamSliceName, config) {
     sliceService.defineSlice({
@@ -574,9 +544,9 @@ export class Tracer {
   }
 
   /**
-   * ��������� ������� ���� ������������ ������
-   * @param {string} streamSliceName - ��� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} streamSliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static disableSliceListeners(streamSliceName) {
     sliceService.disableSliceListeners({
@@ -588,9 +558,9 @@ export class Tracer {
   }
 
   /**
-   * ����� �������� ���������� �� ������� ������� ��� ���������� ������
-   * @param {string} streamSliceName - ��� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} streamSliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static enableSlice(streamSliceName) {
     sliceService.enableSlice({
@@ -602,66 +572,55 @@ export class Tracer {
   }
 
   /**
-   * ����� ������������� �� ������� beforeCallMethod/afterCallMethod,
-   * ���� � ������ ������������ ������� tracerState[streamSliceName] === true => �������� callback(eventArgs)
-   * @param {string} sliceName - ��� ������
-   * @param {Function} callback - ������� ��������� ������, ���������� ��� �������� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� �� ������� ��� ������ ��� ������, ��� ����� �� ���������
+   * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ beforeCallMethod/afterCallMethod,
+   * пїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ tracerState[streamSliceName] === true => пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ callback(eventArgs)
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static traceBySlice(sliceName, callback) {
-    sliceService.traceBySlice({
-      emitter,
-      stateConfig: Tracer[stateConfigKey],
-      sliceName,
-      callback,
-    });
+    if (!sliceName || !callback) throw new Error("??????? ??? ????????? ? ??????");
+    const sliceRuntime = Tracer[stateConfigKey].get(sliceName);
+    if (!sliceRuntime) throw new Error(`?? ????????? ????? ${sliceName}`);
+    const unsubscribe = Tracer.trace(callback, { slice: sliceName });
+    sliceRuntime.callbacks.set(callback, { events: [], callback, dispose: unsubscribe });
     return Tracer;
   }
 
   /**
-   * ��������� ����������� ������ ���� ���, ����� ���� ������������� ������������
-   * @param {string} sliceName - ��� ������
-   * @param {Function} callback - ������� ��������� ������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static traceBySliceOnce(sliceName, callback) {
-    sliceService.traceBySliceOnce({
-      emitter,
-      stateConfig: Tracer[stateConfigKey],
-      sliceName,
-      callback,
-    });
-
+    if (!sliceName || !callback) throw new Error("??????? ??? ????????? ? ??????");
+    const sliceRuntime = Tracer[stateConfigKey].get(sliceName);
+    if (!sliceRuntime) throw new Error(`?? ????????? ????? ${sliceName}`);
+    const oneShot = (event) => { callback(event); Tracer.untraceBySlice(sliceName, callback); };
+    const unsubscribe = Tracer.trace(oneShot, { slice: sliceName });
+    sliceRuntime.callbacks.set(callback, { events: [], callback: oneShot, dispose: unsubscribe });
     return Tracer;
   }
 
   /**
-   * ��������� ����������� ������������������ �������
-   * @param {string[]} sliceSeq - ������ ���� �������
-   * @param {Function} callback - ������� ��������� ������, ���������� ����� ��� ������ �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string[]} sliceSeq - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static traceBySliceSequence(sliceSeq, callback) {
-    Tracer.traceAll((args) => {
-      const isTraceSeq = sliceSeq.every(
-        (name) => args.tracerState.get(name) === true,
-      );
-
-      if (isTraceSeq) {
-        callback(args);
-      }
-    });
-
+    subscriptionService.traceSubscription({ emitter, store: traceCallback, callback, options: { sliceSequence: sliceSeq } });
     return Tracer;
   }
 
 
   /**
-   * ����� ��������� ������� ���� ������������ ������ sliceName
-   * @param {string} sliceName - ��� ������
-   * @param {Function} [callback] - ������� ����������, ����� �������� ���� �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ sliceName
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} [callback] - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static untraceBySlice(sliceName, callback) {
     sliceService.untraceBySlice({
@@ -674,18 +633,18 @@ export class Tracer {
   }
 
   /**
-   * ����� ��������� ���� �� ������� � ������.
-   * ������ ���������� ��� ������������ �������, ���� ������� ���������� true,
-   * ����������� ����� �������� debugger
-   * @param {string} eventName - ��� ������� (beforeCallMethod/afterCallMethod/propertyGet/propertySet)
-   * @param {Function} conditionCallback - �������, ������������ boolean ��� ��������� �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� �� ������� ��� ������� ��� ������
+   * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+   * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ true,
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ debugger
+   * @param {string} eventName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (beforeCallMethod/afterCallMethod/propertyGet/propertySet)
+   * @param {Function} conditionCallback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ boolean пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static debugOn(eventName, conditionCallback) {
 
     if (!eventName || !conditionCallback) {
-      throw new Error("������� ��� ������� � ������!");
+      throw new Error("пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ!");
     }
 
     const cb = (args) => {
@@ -701,16 +660,16 @@ export class Tracer {
   }
 
   /**
-   * ������������� ���������� ���� ���� ���, ���� conditionCallback() === true
-   * @param {string} eventName - ��� �������
-   * @param {Function} conditionCallback - �������, ������������ boolean ��� ��������� �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� �� ������� ��� ������� ��� ������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ, пїЅпїЅпїЅпїЅ conditionCallback() === true
+   * @param {string} eventName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} conditionCallback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ boolean пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static debugOnceOn(eventName, conditionCallback) {
 
     if (!eventName || !conditionCallback) {
-      throw new Error("������� ��� ������� � ������!");
+      throw new Error("пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ!");
     }
 
     const cb = (args) => {
@@ -726,24 +685,25 @@ export class Tracer {
   }
 
   /**
-   * ��������� �������� �� ����� ������� ������� � ������/������ �������
-   * @param {Function} callback - ������� ��������� ������, ���������� �������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
-   * @throws {Error} ���� �� ������ ������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @throws {Error} пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
    */
-  static traceAll(callback) {
-    subscriptionService.traceAll({
-      emitter,
-      store: traceCallback,
-      callback,
-    });
-    return Tracer;
-  }
+  /**
+   * Canonical subscription API for trace events.
+   * @param {Function} callback - Event handler. Receives an event or a batch when options.batch is set.
+   * @param {object} [options] - Trace filters and delivery options.
+   * @returns {Function} Unsubscribe function.
+   */
+  static trace(callback, options = {}) { return subscriptionService.traceSubscription({ emitter, callback, options }); }
+
+  static traceAll(callback) { subscriptionService.traceSubscription({ emitter, store: traceCallback, callback }); return Tracer; }
 
 
   /**
-   * ����-�������� �� ��� ������� �����������.
-   * @param {Function} callback - �������� ������ �������
+   * пїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    * @param {object} [options]
    * @param {number} [options.maxBatchSize=100]
    * @param {number} [options.flushIntervalMs=16]
@@ -751,106 +711,85 @@ export class Tracer {
    * @returns {typeof Tracer}
    */
   static traceAllBatched(callback, options = {}) {
-    subscriptionService.traceAllBatched({
+    subscriptionService.traceSubscription({
       emitter,
       store: traceBatchCallback,
       callback,
-      options,
+      options: { batch: options || true },
     });
     return Tracer;
   }
 
   /**
-   * �������� ������ �� ������� ������� �������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
-  static traceCalls(callback) {
-    subscriptionService.traceCalls({
-      emitter,
-      store: traceCallCallback,
-      callback,
-    });
-    return Tracer;
-  }
+  static traceCalls(callback) { subscriptionService.traceSubscription({ emitter, store: traceCallCallback, callback, options: { eventTypes: "calls" } }); return Tracer; }
 
   /**
-   * ����-�������� �� ������� ������� �������.
-   * @param {Function} callback - �������� ������ �������
+   * пїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    * @param {object} [options]
    * @returns {typeof Tracer}
    */
   static traceCallsBatched(callback, options = {}) {
-    subscriptionService.traceCallsBatched({
+    subscriptionService.traceSubscription({
       emitter,
       store: traceCallBatchCallback,
       callback,
-      options,
+      options: { eventTypes: "calls", batch: options || true },
     });
     return Tracer;
   }
 
   /**
-   * �������� ������ �� ������� ������/������ �������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
-  static traceProperties(callback) {
-    subscriptionService.traceProperties({
-      emitter,
-      store: tracePropertyCallback,
-      callback,
-    });
-    return Tracer;
-  }
+  static traceProperties(callback) { subscriptionService.traceSubscription({ emitter, store: tracePropertyCallback, callback, options: { eventTypes: "properties" } }); return Tracer; }
 
 
   /**
-   * �������� �� ������� ������/������ ���������� ������� ��� ������� if � callback.
-   * @param {string | string[] | Function} propSelector - ��� ��������, ������ ���� ��� ��������(event) => boolean
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ if пїЅ callback.
+   * @param {string | string[] | Function} propSelector - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ(event) => boolean
    * @param {Function} callback
    * @returns {typeof Tracer}
    */
   static traceProperty(propSelector, callback) {
-    const matcher = (event) => {
-      if (typeof propSelector === "string") {
-        return event.propName === propSelector;
-      }
-      if (Array.isArray(propSelector)) {
-        return propSelector.includes(event.propName);
-      }
-      if (typeof propSelector === "function") {
-        return propSelector(event) === true;
-      }
-      return false;
-    };
+    if (!isSupportedTracePropertySelector(propSelector)) {
+      return Tracer;
+    }
 
-    return Tracer.traceProperties((event) => {
-      if (matcher(event)) {
-        callback(event);
-      }
-    });
-  }
-
-  /**
-   * ����-�������� �� ������� ������/������ �������.
-   * @param {Function} callback - �������� ������ �������
-   * @param {object} [options]
-   * @returns {typeof Tracer}
-   */
-  static tracePropertiesBatched(callback, options = {}) {
-    subscriptionService.tracePropertiesBatched({
+    subscriptionService.traceSubscription({
       emitter,
-      store: tracePropertyBatchCallback,
+      store: tracePropertyCallback,
       callback,
-      options,
+      options: { eventTypes: "properties", property: propSelector },
     });
     return Tracer;
   }
 
   /**
-   * ������� ��� �������� �����������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+   * @param {Function} callback - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {object} [options]
+   * @returns {typeof Tracer}
+   */
+  static tracePropertiesBatched(callback, options = {}) {
+    subscriptionService.traceSubscription({
+      emitter,
+      store: tracePropertyBatchCallback,
+      callback,
+      options: { eventTypes: "properties", batch: options || true },
+    });
+    return Tracer;
+  }
+
+  /**
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static untraceAll() {
     subscriptionService.untraceAll({
@@ -865,7 +804,7 @@ export class Tracer {
   }
 
   /**
-   * ������� �������� �� ������� ������� �������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @returns {typeof Tracer}
    */
   static untraceCalls() {
@@ -881,7 +820,7 @@ export class Tracer {
   }
 
   /**
-   * ������� �������� �� ������� ������/������ �������.
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ/пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
    * @returns {typeof Tracer}
    */
   static untraceProperties() {
@@ -897,13 +836,13 @@ export class Tracer {
   }
 
   /**
-   * ������� ��������� ����������� ��� ���������� ������� �� ��������� �������:
-   * - string: ������� ��������� �����;
-   * - string[]: ������� ��� ��������� ������;
-   * - predicate(args): ���������������� �������� ������ true.
-   * @param {string | string[] | Function} sliceSelector - �������� ������ ��� ��������
-   * @param {...*} values - �������� ��� �����������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ:
+   * - string: пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ;
+   * - string[]: пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ;
+   * - predicate(args): пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ true.
+   * @param {string | string[] | Function} sliceSelector - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {...*} values - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static logSlice(sliceSelector, ...values) {
     const args = {
@@ -941,10 +880,10 @@ export class Tracer {
   }
 
   /**
-   * ��������� ������� ���� ����� �������
-   * @param {string} sliceName - ��� ������
-   * @param {Function} fn - ������� ��� ����������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} fn - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static invokeOnSlice(sliceName, fn) {
     if (Tracer.tracerState.get(sliceName)) {
@@ -955,39 +894,29 @@ export class Tracer {
   }
 
   /**
-   * ���������� ������� �������� ����������
-   * @returns {import('./observers/context.js').ExecutionContext} ������� �������� ����������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {import('./observers/context.js').ExecutionContext} пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static getCurrentContext() {
     return ExecutionContext.getCurrentContext();
   }
 
   static defineSliceByCall(sliceName, target, targetFnName, predicate) {
-    
     Tracer.registerSliceDefinition(sliceName, predicate);
-    
     const originalFn = target[targetFnName];
-      
-      target[targetFnName] = function() {
-        if (predicate(arguments)) {
-          return sliceService.executeInSlice({
-            tracerState: Tracer.tracerState,
-            sliceName,
-            invoke: () => originalFn.apply(this, arguments),
-          });
-        }
-        return originalFn.apply(this, arguments);
-      };
-
-      return Tracer;
+    target[targetFnName] = function() {
+      if (predicate(arguments)) return sliceService.executeInSlice({ tracerState: Tracer.tracerState, sliceName, invoke: () => originalFn.apply(this, arguments) });
+      return originalFn.apply(this, arguments);
+    };
+    return target;
   }
 
   /**
-   * ��������� ������� � ���������� ����� �������, ������� ������� �����.
-   * ����� ��������� ������ �������-���������
-   * @param {string} sliceName - ��� ������
-   * @param {Function} fn - ������� ������� ��� �������� ������ ������
-   * @returns {Function} ��������� �������, ������������ ����� �� ����� ����������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ.
+   * пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {Function} fn - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Function} пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static defineSliceByFunction = (sliceName, fn) => {
     
@@ -1007,14 +936,14 @@ export class Tracer {
   }
 
   /**
-   * ���������� �����, ������� ������������ ��� ������ ��������� �������
-   * @param {string} sliceName - ��� ������
-   * @param {string} fnName - ������ ��� ������� ��� ������������
-   * @returns {typeof Tracer} ����� Tracer ��� ������� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+   * @param {string} fnName - пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {typeof Tracer} пїЅпїЅпїЅпїЅпїЅ Tracer пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static defineSliceByFunctionName(sliceName, fnName) {
     if (!sliceName || !fnName) {
-      throw new Error('sliceName � fnName �����������');
+      throw new Error('sliceName пїЅ fnName пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ');
     }
     Tracer.defineSlice(sliceName, (args) => {
       return args.fullName === fnName;
@@ -1023,8 +952,8 @@ export class Tracer {
   }
 
   /**
-   * �������� ������ ���� �������� �������
-   * @returns {Array} ������ ���� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Array} пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static getEnabledSlices() {
     return sliceService.getEnabledSlices({
@@ -1034,8 +963,8 @@ export class Tracer {
   }
 
   /**
-   * �������� ��������� �����
-   * @param {string} sliceName - ��� ������
+   * пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
+   * @param {string} sliceName - пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
    * @returns {typeof Tracer}
    */
   static disableSlice(sliceName) {
@@ -1049,8 +978,8 @@ export class Tracer {
   }
 
   /**
-   * ������ ������ ������������������ �������
-   * @returns {Array} ������ ���� �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+   * @returns {Array} пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    */
   static getRegisteredSlices() {
     return sliceService.getRegisteredSlices({
@@ -1058,52 +987,23 @@ export class Tracer {
     });
   }
 
-  /**
-   * ������������ ������������������ �������� (������) � ����������� ������.
-   * @param {object} [options]
-   * @param {boolean} [options.includeFunctions=true] - ��������� predicate/beforeCall/afterCall ��� ������ �������
-   * @returns {object} ����������� ������ ���������
-   */
-  static exportSliceScenarios(options = {}) {
-    return scenarioService.exportSliceScenarios({
-      stateConfig: Tracer[stateConfigKey],
-      tracerState: Tracer.tracerState,
-      options,
-    });
-  }
-
-  /**
-   * ����������� ����������� ������ ���������.
-   * @param {object} payload - ������, ���������� �� exportSliceScenarios
-   * @param {object} [options]
-   * @param {boolean} [options.overwrite=true] - ������������ ������������ ������ � ��� �� ������
-   * @param {boolean} [options.activate=true] - ��������� ��������������� ������ �� �������
-   * @param {(source: string) => Function} [options.functionParser] - ��������� ������ ������� �� ������
-   * @returns {typeof Tracer}
-   */
-  static importSliceScenarios(payload, options = {}) {
-    scenarioService.importSliceScenarios({
-      payload,
-      options,
-      stateConfig: Tracer[stateConfigKey],
-      registerSliceDefinition: (name, config) => Tracer.registerSliceDefinition(name, config),
-      enableSlice: (name) => Tracer.enableSlice(name),
-      disableSlice: (name) => Tracer.disableSlice(name),
-      untraceBySlice: (name) => Tracer.untraceBySlice(name),
-      disableSliceListeners: (name) => Tracer.disableSliceListeners(name),
-    });
-    return Tracer;
+  static printRegisteredSlices() {
+    const slices = Tracer.getRegisteredSlices();
+    if (!slices.length) { console.log("??? ?????????????????? ???????"); return []; }
+    console.log("?????????????????? ??????:");
+    slices.forEach((sliceName, index) => console.log(String(index + 1) + ". " + sliceName));
+    return slices;
   }
 
   static isX2tEnvironment() {
     return typeof EventTarget === 'undefined';
   }
 
-  /** ������ � �������� ����������� */
+  /** пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ */
   static reports = reports;
 
   /**
-   * ������ ����� ������������ �������
+   * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
    * @type {Map}
    */
   static [stateConfigKey] = new Map();

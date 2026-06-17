@@ -1,5 +1,4 @@
 import {
-  TRACE_EVENTS,
   TRACE_CALL_EVENTS,
   subscribeEvents,
   unsubscribeEvents,
@@ -50,12 +49,12 @@ export const registerSliceDefinition = ({
   logger = console,
 }) => {
   if (stateConfig.has(sliceName)) {
-    throw new Error(`Имя слайса трассировки "${sliceName}" уже определено`);
+    throw new Error(`РРјСЏ СЃР»Р°Р№СЃР° С‚СЂР°СЃСЃРёСЂРѕРІРєРё "${sliceName}" СѓР¶Рµ РѕРїСЂРµРґРµР»РµРЅРѕ`);
   }
 
   const normalizedConfig = normalizeSliceConfig(config);
   if (!normalizedConfig || typeof normalizedConfig !== "object") {
-    throw new Error("Аргумент config должен быть объектом");
+    throw new Error("РђСЂРіСѓРјРµРЅС‚ config РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РѕР±СЉРµРєС‚РѕРј");
   }
 
   const sliceRuntime = {
@@ -102,8 +101,8 @@ export const registerSliceDefinition = ({
   syncState(sliceRuntime, tracerState, sliceName);
   stateConfig.set(sliceName, sliceRuntime);
 
-  logger.log(`Зарегистрирован TraceStreamSlice - ${sliceName}`);
-  logger.log(`${sliceName} - ${normalizedConfig.description || "Описание не определено"}`);
+  logger.log(`Р—Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ TraceStreamSlice - ${sliceName}`);
+  logger.log(`${sliceName} - ${normalizedConfig.description || "РћРїРёСЃР°РЅРёРµ РЅРµ РѕРїСЂРµРґРµР»РµРЅРѕ"}`);
 };
 
 export const executeInSlice = ({ tracerState, sliceName, invoke }) => {
@@ -150,7 +149,7 @@ export const disableSliceListeners = ({ emitter, stateConfig, sliceName }) => {
 export const enableSlice = ({ emitter, stateConfig, sliceName }) => {
   const sliceRuntime = stateConfig.get(sliceName);
   if (!sliceRuntime) {
-    throw new Error(`Не определен слайс ${sliceName}`);
+    throw new Error(`РќРµ РѕРїСЂРµРґРµР»РµРЅ СЃР»Р°Р№СЃ ${sliceName}`);
   }
   if (sliceRuntime.enabled || sliceRuntime.disabled) {
     return;
@@ -174,39 +173,6 @@ export const enableSlice = ({ emitter, stateConfig, sliceName }) => {
 export const defineSlice = ({ emitter, stateConfig, tracerState, sliceName, config, logger }) => {
   registerSliceDefinition({ stateConfig, tracerState, sliceName, config, logger });
   enableSlice({ emitter, stateConfig, sliceName });
-};
-
-export const traceBySlice = ({ emitter, stateConfig, sliceName, callback }) => {
-  if (!sliceName || !callback) {
-    throw new Error("Укажите имя контекста и колбек");
-  }
-
-  const sliceRuntime = stateConfig.get(sliceName);
-  if (!sliceRuntime) {
-    throw new Error(`Не определен слайс ${sliceName}`);
-  }
-
-  const wrappedCallback = (args) => {
-    if (args.tracerState.get(sliceName)) {
-      callback(args);
-    }
-  };
-
-  const token = subscribeEvents({
-    emitter,
-    events: TRACE_EVENTS,
-    callback: wrappedCallback,
-  });
-
-  sliceRuntime.callbacks.set(callback, token);
-};
-
-export const traceBySliceOnce = ({ emitter, stateConfig, sliceName, callback }) => {
-  const oneShot = (args) => {
-    callback(args);
-    untraceBySlice({ emitter, stateConfig, sliceName, callback: oneShot });
-  };
-  traceBySlice({ emitter, stateConfig, sliceName, callback: oneShot });
 };
 
 export const untraceBySlice = ({ emitter, stateConfig, sliceName, callback }) => {

@@ -236,7 +236,7 @@ const after = 1;
 
         const result = await loader.processCode(source, "C:/tmp/instance-wrap-function.js");
         const assignPos = result.indexOf("this.init = function()");
-        const observePos = result.indexOf('Tracer.observeProperty(this, "init", "CEditorPage")');
+        const observePos = result.indexOf('Tracer.createProxyFn(this["init"], "init", "CEditorPage")');
 
         expect(observePos).toBeGreaterThan(assignPos);
     });
@@ -254,7 +254,7 @@ const after = 1;
 
         const result = await loader.processCode(source, "C:/tmp/instance-wrap-class.js");
         const assignPos = result.indexOf("this.init = function()");
-        const observePos = result.indexOf('Tracer.observeProperty(this, "init", "CEditorPage")');
+        const observePos = result.indexOf('Tracer.createProxyFn(this["init"], "init", "CEditorPage")');
 
         expect(observePos).toBeGreaterThan(assignPos);
     });

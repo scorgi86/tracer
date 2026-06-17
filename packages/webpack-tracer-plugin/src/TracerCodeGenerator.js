@@ -3,22 +3,31 @@ class TracerCodeGenerator {
         return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     }
 
-    static observeProperty(targetClass, propName, targetExpr = 'this') {
-        return `Tracer.observeProperty(${targetExpr}, '${TracerCodeGenerator.escapeSingleQuote(propName)}', '${TracerCodeGenerator.escapeSingleQuote(targetClass)}');`;
+    static quoteString(value) {
+        return `'${TracerCodeGenerator.escapeSingleQuote(value)}'`;
     }
 
-    static observePropertyAll(targetClass, propsList, targetExpr = 'this') {
+    static observeProperties(targetClass, properties = true, targetExpr = 'this') {
+        const className = TracerCodeGenerator.quoteString(targetClass);
+        const propertiesCode = Array.isArray(properties)
+            ? `[${properties.map((propName) => TracerCodeGenerator.quoteString(propName)).join(', ')}]`
+            : properties === true
+                ? 'true'
+                : TracerCodeGenerator.quoteString(properties);
+
+        return `Tracer.observeProperties(${targetExpr}, { name: ${className}, properties: ${propertiesCode} });`;
+    }
+
+    static observePropertiesList(targetClass, propsList, targetExpr = 'this') {
         if (!Array.isArray(propsList) || propsList.length === 0) {
             return '';
         }
 
-        return propsList.map(propName => {
-            return TracerCodeGenerator.observeProperty(targetClass, propName, targetExpr);
-        }).join('\n\r');
+        return TracerCodeGenerator.observeProperties(targetClass, propsList, targetExpr);
     }
 
-    static observeAllProperties(targetClass, targetExpr = 'this') {
-        return `Tracer.observeAllProperties(${targetExpr}, '${TracerCodeGenerator.escapeSingleQuote(targetClass)}');`;
+    static observePropertiesAll(targetClass, targetExpr = 'this') {
+        return TracerCodeGenerator.observeProperties(targetClass, true, targetExpr);
     }
 
     static observeConstructor(targetClass) {

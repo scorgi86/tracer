@@ -4,6 +4,30 @@ module.exports = function createWrappingActionsApplier({
     isInsertStart,
 }) {
     const getObserverSignature = (statement) => {
+        const assignment = statement?.expression;
+        if (assignment?.type === "AssignmentExpression") {
+            const left = assignment.left;
+            const right = assignment.right;
+            const callExpression = right?.type === "BinaryExpression" && right.operator === "||"
+                ? right.left
+                : right;
+            const callCallee = callExpression?.callee;
+            const callObjectName = callCallee?.object?.type === "Identifier" ? callCallee.object.value : null;
+            const callMethodName = callCallee?.property?.type === "Identifier" ? callCallee.property.value : null;
+            const methodArg = callExpression?.arguments?.[1]?.expression;
+            const classArg = callExpression?.arguments?.[2]?.expression;
+            if (
+                left?.type === "MemberExpression" &&
+                left.object?.type === "ThisExpression" &&
+                callObjectName === "Tracer" &&
+                callMethodName === "createProxyFn" &&
+                methodArg?.type === "StringLiteral" &&
+                classArg?.type === "StringLiteral"
+            ) {
+                return `instanceProxy:${classArg.value}:${methodArg.value}`;
+            }
+        }
+
         const call = statement?.expression;
         if (!call || call.type !== "CallExpression") {
             return null;
@@ -16,13 +40,32 @@ module.exports = function createWrappingActionsApplier({
             return null;
         }
 
-        if (methodName === "observeProperty") {
-            const propertyArg = call.arguments?.[1]?.expression;
-            const classArg = call.arguments?.[2]?.expression;
-            if (propertyArg?.type !== "StringLiteral" || classArg?.type !== "StringLiteral") {
+        if (methodName === "observeProperties") {
+            const optionsArg = call.arguments?.[1]?.expression;
+            if (optionsArg?.type !== "ObjectExpression") {
                 return null;
             }
-            return `observeProperty:${classArg.value}:${propertyArg.value}`;
+
+            const getOptionValue = (key) =>
+                optionsArg.properties?.find((prop) => prop.key?.value === key || prop.key?.value === key)?.value;
+            const nameArg = getOptionValue("name") || getOptionValue("className");
+            const propertiesArg = getOptionValue("properties");
+            const propertiesSignature = propertiesArg?.type === "StringLiteral"
+                ? propertiesArg.value
+                : propertiesArg?.type === "ArrayExpression"
+                    ? propertiesArg.elements
+                        .filter((element) => element?.expression?.type === "StringLiteral")
+                        .map((element) => element.expression.value)
+                        .join(",")
+                    : propertiesArg?.type === "BooleanLiteral" && propertiesArg.value === true
+                        ? "*"
+                        : null;
+
+            if (nameArg?.type !== "StringLiteral" || !propertiesSignature) {
+                return null;
+            }
+
+            return `observeProperties:${nameArg.value}:${propertiesSignature}`;
         }
 
         if (methodName === "observePrototype") {
@@ -63,7 +106,7 @@ module.exports = function createWrappingActionsApplier({
 
     const getInstanceWrapStatements = (action) =>
         parseCodeToStatements(
-            `${getTracerFacadeCode()}\nTracer.observeProperty(this, ${JSON.stringify(action.methodName)}, ${JSON.stringify(action.targetName)});`
+            `${getTracerFacadeCode()}\nthis[${JSON.stringify(action.methodName)}] = Tracer.createProxyFn(this[${JSON.stringify(action.methodName)}], ${JSON.stringify(action.methodName)}, ${JSON.stringify(action.targetName)}) || this[${JSON.stringify(action.methodName)}];`
         );
 
     const getPrototypeWrapStatements = (action) =>
@@ -105,7 +148,7 @@ module.exports = function createWrappingActionsApplier({
         applySortedActions({
             statements: bodyStatements,
             actions,
-            buildSignature: (action) => `observeProperty:${action.targetName}:${action.methodName}`,
+            buildSignature: (action) => `instanceProxy:${action.targetName}:${action.methodName}`,
             getInjectedStatements: getInstanceWrapStatements,
         });
 

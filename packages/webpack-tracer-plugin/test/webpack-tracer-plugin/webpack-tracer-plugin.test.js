@@ -1,4 +1,4 @@
-const webpack = require('webpack');
+﻿const webpack = require('webpack');
 const path = require('path');
 const fs = require('fs');
 const InjectConstructorCodePlugin = require('../../src/UniversalCodeInjectorPlugin.js');
@@ -19,7 +19,7 @@ describe('InjectConstructorCodePlugin', () => {
   };
 
   beforeAll((done) => {
-    // Создаем тестовый конфиг
+    // РЎРѕР·РґР°РµРј С‚РµСЃС‚РѕРІС‹Р№ РєРѕРЅС„РёРі
     source = fs.readFileSync(indexFile, { encoding: "utf-8" }, (err, result) => {
       if (err) {
         throw new Error(err);
@@ -41,7 +41,7 @@ describe('InjectConstructorCodePlugin', () => {
             targets: ["CEditorPage"],
             /** @type   */
             generateCode: {
-                /** Добавит код после конструктора */
+                /** Р”РѕР±Р°РІРёС‚ РєРѕРґ РїРѕСЃР»Рµ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂР° */
                 // construct: {
                 //   CEditorPage: {
                 //     code: () => { return 'window.page = this;' }
@@ -66,7 +66,7 @@ describe('InjectConstructorCodePlugin', () => {
                     }
 
                     // if (propsList) {
-                    //   code = TracerCodeGenerator.observePropertyAll(className, propsList)
+                    //   code = TracerCodeGenerator.observePropertiesList(className, propsList)
                     // }
 
                     return code.trim();
@@ -100,7 +100,7 @@ describe('InjectConstructorCodePlugin', () => {
       ]
     };
     
-    // Запускаем webpack
+    // Р—Р°РїСѓСЃРєР°РµРј webpack
     let w = webpack(config, (err, stats) => {
       if (err || stats.hasErrors()) {
         console.error(err || stats.toString());
@@ -109,20 +109,20 @@ describe('InjectConstructorCodePlugin', () => {
     });
   });
   
-  // test('должен инжектировать код в конструкторы', () => {
+  // test('РґРѕР»Р¶РµРЅ РёРЅР¶РµРєС‚РёСЂРѕРІР°С‚СЊ РєРѕРґ РІ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂС‹', () => {
   //   const newCode = fs.readFileSync(outputFile, 'utf8');
     
   //   Object.keys(targetsConfig).forEach(className => {
   //       const classProps = targetsConfig[className];
         
   //       classProps.forEach((propName) => {
-  //           const pos = newCode.indexOf(TracerCodeGenerator.observeProperty(className, propName));
+  //           const pos = newCode.indexOf(TracerCodeGenerator.observeProperties(className, propName));
   //           expect(pos > -1).toBe(true);
   //       });
   //   });
   // });
 
-  // test('Плагин должен включить в сборку файлы сценариев', () => {
+  // test('РџР»Р°РіРёРЅ РґРѕР»Р¶РµРЅ РІРєР»СЋС‡РёС‚СЊ РІ СЃР±РѕСЂРєСѓ С„Р°Р№Р»С‹ СЃС†РµРЅР°СЂРёРµРІ', () => {
   //   const newCode = fs.readFileSync(outputFile, 'utf8');
 
   //   expect(newCode.indexOf('tracer-js') > -1).toBe(true);
@@ -130,7 +130,7 @@ describe('InjectConstructorCodePlugin', () => {
   //   expect(newCode.indexOf('tracer-code-js') > -1).toBe(true);
   // })
 
-  test('CEditorPage добавляет ссылку на себя в window.page', () => {
+  test('CEditorPage РґРѕР±Р°РІР»СЏРµС‚ СЃСЃС‹Р»РєСѓ РЅР° СЃРµР±СЏ РІ window.page', () => {
     const newCode = fs.readFileSync(outputFile, 'utf8');
     expect(newCode.indexOf('window.page = this;') > -1).toBe(true);
   });
@@ -142,7 +142,7 @@ describe('InjectConstructorCodePlugin', () => {
     expect(newCode.includes('__WEBPACK_TRACER_RUNTIME_INSTANCE__')).toBe(true);
   });
 
-  // test('asc_docs_api добавляет ссылку на себя в window.api', () => {
+  // test('asc_docs_api РґРѕР±Р°РІР»СЏРµС‚ СЃСЃС‹Р»РєСѓ РЅР° СЃРµР±СЏ РІ window.api', () => {
   //   const newCode = fs.readFileSync(outputFile, 'utf8');
   //   expect(newCode.indexOf('window.api = this;') > -1).toBe(true);
   // });

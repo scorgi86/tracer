@@ -50,6 +50,61 @@ describe("SWCInjectLoader cache", () => {
         expect(calls).toBe(2);
     });
 
+    test("invalidates cache when file path changes", async () => {
+        const loader = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) => `window.__cache_test='${className}';`
+            }
+        });
+
+        let calls = 0;
+        loader.processWithAST = async (sourceCode) => {
+            calls += 1;
+            return `${sourceCode}\n/*patched-${calls}*/`;
+        };
+
+        const source = "class CEditorPage { constructor() {} }";
+
+        const first = await loader.processCode(source, "C:/tmp/HtmlPage.js");
+        const second = await loader.processCode(source, "C:/tmp/OtherPage.js");
+
+        expect(first).not.toBe(second);
+        expect(calls).toBe(2);
+    });
+
+    test("uses separate cache entries when options differ", async () => {
+        let calls = 0;
+        const source = "class CEditorPage { constructor() {} }";
+        const filePath = "C:/tmp/HtmlPage.js";
+        const processWithAST = async (sourceCode) => {
+            calls += 1;
+            return `${sourceCode}\n/*patched-${calls}*/`;
+        };
+
+        const loaderA = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) => `window.__cache_a='${className}';`
+            }
+        });
+        loaderA.processWithAST = processWithAST;
+
+        const loaderB = new SWCInjectLoader({
+            targets: new Set(["CEditorPage"]),
+            generateCode: {
+                onConstructor: ({ className }) => `window.__cache_b='${className}';`
+            }
+        });
+        loaderB.processWithAST = processWithAST;
+
+        const first = await loaderA.processCode(source, filePath);
+        const second = await loaderB.processCode(source, filePath);
+
+        expect(first).not.toBe(second);
+        expect(calls).toBe(2);
+    });
+
     test("updateOptions clears cache and forces recalculation", async () => {
         const loader = new SWCInjectLoader({
             targets: new Set(["CEditorPage"]),
